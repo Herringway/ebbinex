@@ -73,13 +73,15 @@ void dumpData(ubyte[] source, const DumpInfo info, string outPath, bool usa) {
 	auto outFile = File(buildPath(outDir, setExtension(info.name, "bin")), "w");
 	outFile.rawWrite(source[info.offset..info.offset+info.size]);
     if (info.subdir == "text_data") {
-        parseTextData(buildPath(outDir, setExtension(info.name, "ebtxt")), source[info.offset..info.offset+info.size], info.offset+0xC00000, usa);
+        parseTextData(buildPath(outDir, info.name), source[info.offset..info.offset+info.size], info.offset+0xC00000, usa);
     }
 }
 
-void parseTextData(string filename, ubyte[] source, ulong offset, bool usa) {
+void parseTextData(string baseName, ubyte[] source, ulong offset, bool usa) {
     import std.array : empty, front, popFront;
-    auto outFile = File(filename, "w");
+    auto outFile = File(setExtension(baseName, "ebtxt"), "w");
+    auto symbolFile = File(setExtension(baseName, "symbols.asm"), "w");
+    outFile.writefln!".INCLUDE \"%s\"\n"(setExtension(baseName.baseName, "symbols.asm"));
     string tmpbuff;
     immutable string[ubyte] table = usa ? usTable : jpTable;
     auto nextByte() {
@@ -89,7 +91,7 @@ void parseTextData(string filename, ubyte[] source, ulong offset, bool usa) {
         return first;
     }
     void printLabel() {
-        outFile.writefln!".EXPORT TEXT_BLOCK_%06X"(offset);
+        symbolFile.writefln!".GLOBAL TEXT_BLOCK_%06X: far"(offset);
         outFile.writefln!"TEXT_BLOCK_%06X: ;$%06X"(offset, offset);
     }
     void flushBuff() {
