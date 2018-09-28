@@ -1,6 +1,7 @@
 import std.file;
 import std.path;
 import std.stdio;
+import std.string;
 
 import usa;
 import jpn;
@@ -70,10 +71,362 @@ void dumpData(ubyte[] source, const DumpInfo info, string outPath, bool usa) {
 	if (!outDir.exists) {
 		mkdirRecurse(outDir);
 	}
-	auto outFile = File(buildPath(outDir, setExtension(info.name, "bin")), "w");
-	outFile.rawWrite(source[info.offset..info.offset+info.size]);
     if (info.subdir == "text_data") {
         parseTextData(buildPath(outDir, info.name), source[info.offset..info.offset+info.size], info.offset+0xC00000, usa);
+    } else if (info.subdir == "movements") {
+        //parseMovement(buildPath(outDir, info.name), source[info.offset..info.offset+info.size], info.offset+0xC00000, usa);
+    } else {
+    	auto outFile = File(buildPath(outDir, setExtension(info.name, "bin")), "w");
+    	outFile.rawWrite(source[info.offset..info.offset+info.size]);
+    }
+}
+
+immutable string[] musicTracks = import("music.txt").split("\n");
+
+void parseMovement(string baseName, ubyte[] source, ulong offset, bool usa) {
+    import std.array : empty, front, popFront;
+    auto outFile = File(setExtension(baseName, "movement"), "w");
+    auto nextByte() {
+        auto first = source.front;
+        source.popFront();
+        offset++;
+        return first;
+    }
+    while (!source.empty) {
+        auto cc = nextByte();
+        switch (cc) {
+            case 0x00:
+                outFile.writeln("\tEBMOVE_END");
+                break;
+            case 0x01:
+                auto arg = nextByte();
+                outFile.writefln!"\tEBMOVE_LOOP $%02X"(arg);
+                break;
+            case 0x02:
+                outFile.writeln("\tEBMOVE_LOOP_END");
+                break;
+            case 0x03:
+                auto arg = nextByte() + (nextByte()<<8) + (nextByte()<<16);
+                outFile.writefln!"\tEBMOVE_LONGJUMP $%06X"(arg);
+                break;
+            case 0x04:
+                auto arg = nextByte() + (nextByte()<<8) + (nextByte()<<16);
+                outFile.writefln!"\tEBMOVE_LONGCALL $%06X"(arg);
+                break;
+            case 0x05:
+                outFile.writeln("\tEBMOVE_LONG_RETURN");
+                break;
+            case 0x06:
+                auto arg = nextByte();
+                outFile.writefln!"\tEBMOVE_PAUSE $%02X"(arg);
+                break;
+            case 0x07:
+                auto arg = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_SHORTJUMP_UNKNOWN $%04X"(arg);
+                break;
+            case 0x08:
+                auto arg = nextByte() + (nextByte()<<8) + (nextByte()<<16);
+                outFile.writefln!"\tEBMOVE_UNKNOWN_08 $%06X"(arg);
+                break;
+            case 0x09:
+                outFile.writeln("\tEBMOVE_HALT");
+                break;
+            case 0x0A:
+                auto arg = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_SHORTCALL_CONDITIONAL $%04X"(arg);
+                break;
+            case 0x0B:
+                auto arg = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_SHORTCALL_CONDITIONAL_NOT $%04X"(arg);
+                break;
+            case 0x0C:
+                outFile.writeln("\tEBMOVE_END_UNKNOWN");
+                break;
+            case 0x0D:
+                auto arg1 = nextByte() + (nextByte()<<8);
+                auto arg2 = nextByte();
+                auto arg3 = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_BINOP_WRAM $%04X, $%02X, $%04X"(arg1, arg2, arg3);
+                break;
+            case 0x0E:
+                auto arg1 = nextByte();
+                auto arg2 = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_WRITE_WORD_TO_9AF9_ENTRY $%02X, $%04X"(arg1, arg2);
+                break;
+            case 0x0F:
+                outFile.writeln("\tEBMOVE_UNKNOWN_08_3B_94_C0");
+                break;
+            case 0x10:
+                auto numStatements = nextByte();
+                ushort[] dests;
+                foreach (i; 0..numStatements) {
+                    dests ~= nextByte() + (nextByte()<<8);
+                }
+                outFile.writefln!"\tEBMOVE_SWITCH_JUMP_TEMPVAR %($%04X, %)"(dests);
+                break;
+            case 0x11:
+                auto numStatements = nextByte();
+                ushort[] dests;
+                foreach (i; 0..numStatements) {
+                    dests ~= nextByte() + (nextByte()<<8);
+                }
+                outFile.writefln!"\tEBMOVE_SWITCH_CALL_TEMPVAR %($%04X, %)"(dests);
+                break;
+            case 0x12:
+                auto arg1 = nextByte() + (nextByte()<<8);
+                auto arg2 = nextByte();
+                outFile.writefln!"\tEBMOVE_WRITE_BYTE_WRAM $%04X, $%02X"(arg1, arg2);
+                break;
+            case 0x13:
+                outFile.writeln("\tEBMOVE_END_UNKNOWN2");
+                break;
+            case 0x14:
+                auto arg1 = nextByte();
+                auto arg2 = nextByte();
+                auto arg3 = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_BINOP_9AF9 $%02X, $%02X, $%04X"(arg1, arg2, arg3);
+                break;
+            case 0x15:
+                auto arg1 = nextByte() + (nextByte()<<8);
+                auto arg2 = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_WRITE_WORD_WRAM $%04X, $%04X"(arg1, arg2);
+                break;
+            case 0x16:
+                auto arg1 = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_UNKNOWN_16 $%04X"(arg1);
+                break;
+            case 0x17:
+                auto arg1 = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_UNKNOWN_17 $%04X"(arg1);
+                break;
+            case 0x18:
+                auto arg1 = nextByte() + (nextByte()<<8);
+                auto arg2 = nextByte();
+                auto arg3 = nextByte();
+                outFile.writefln!"\tEBMOVE_BINOP_WRAM $%04X, $%02X, $%02X"(arg1, arg2, arg3);
+                break;
+            case 0x19:
+                auto arg = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_SHORTJUMP $%04X"(arg);
+                break;
+            case 0x1A:
+                auto arg = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_SHORTCALL $%04X"(arg);
+                break;
+            case 0x1B:
+                outFile.writeln("\tEBMOVE_SHORT_RETURN");
+                break;
+            case 0x1C:
+                auto arg = nextByte() + (nextByte()<<8) + (nextByte()<<16);
+                outFile.writefln!"\tEBMOVE_WRITE_PTR_UNKNOWN $%06X"(arg);
+                break;
+            case 0x1D:
+                auto arg = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_WRITE_WORD_TEMPVAR $%04X"(arg);
+                break;
+            case 0x1E:
+                auto arg = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_WRITE_WRAM_TEMPVAR $%04X"(arg);
+                break;
+            case 0x1F:
+                auto arg = nextByte();
+                outFile.writefln!"\tEBMOVE_WRITE_TEMPVAR_9AF9 $%02X"(arg);
+                break;
+            case 0x20:
+                auto arg = nextByte();
+                outFile.writefln!"\tEBMOVE_WRITE_9AF9_TEMPVAR $%02X"(arg);
+                break;
+            case 0x21:
+                auto arg = nextByte();
+                outFile.writefln!"\tEBMOVE_WRITE_9AF9_WAIT_TIMER $%02X"(arg);
+                break;
+            case 0x22:
+                auto arg = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_UNKNOWN_WRITE_11E2 $%04X"(arg);
+                break;
+            case 0x23:
+                auto arg = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_UNKNOWN_WRITE_11A6 $%04X"(arg);
+                break;
+            case 0x24:
+                outFile.writeln("\tEBMOVE_LOOP_TEMPVAR");
+                break;
+            case 0x25:
+                auto arg = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_UNKNOWN_WRITE_121E $%04X"(arg);
+                break;
+            case 0x26:
+                auto arg = nextByte();
+                outFile.writefln!"\tEBMOVE_WRITE_9AF9_10F2 $%02X"(arg);
+                break;
+            case 0x27:
+                auto arg1 = nextByte();
+                auto arg2 = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_BINOP_TEMPVAR $%02X, $%04X"(arg1, arg2);
+                break;
+            case 0x28:
+                auto arg = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_SET_X $%04X"(arg);
+                break;
+            case 0x29:
+                auto arg = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_SET_Y $%04X"(arg);
+                break;
+            case 0x2A:
+                auto arg = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_SET_Z $%04X"(arg);
+                break;
+            case 0x2B:
+                auto arg = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_SET_X_RELATIVE $%04X"(arg);
+                break;
+            case 0x2C:
+                auto arg = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_SET_Y_RELATIVE $%04X"(arg);
+                break;
+            case 0x2D:
+                auto arg = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_SET_Z_RELATIVE $%04X"(arg);
+                break;
+            case 0x2E:
+                auto arg = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_SET_X_VELOCITY_RELATIVE $%04X"(arg);
+                break;
+            case 0x2F:
+                auto arg = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_SET_Y_VELOCITY_RELATIVE $%04X"(arg);
+                break;
+            case 0x30:
+                auto arg = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_SET_Z_VELOCITY_RELATIVE $%04X"(arg);
+                break;
+            case 0x31:
+                auto arg1 = nextByte();
+                auto arg2 = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_UNKNOWN_31 $%02X, $%04X"(arg1, arg2);
+                break;
+            case 0x32:
+                auto arg1 = nextByte();
+                auto arg2 = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_UNKNOWN_32 $%02X, $%04X"(arg1, arg2);
+                break;
+            case 0x33:
+                auto arg1 = nextByte();
+                auto arg2 = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_UNKNOWN_33 $%02X, $%04X"(arg1, arg2);
+                break;
+            case 0x34:
+                auto arg1 = nextByte();
+                auto arg2 = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_UNKNOWN_34 $%02X, $%04X"(arg1, arg2);
+                break;
+            case 0x35:
+                auto arg1 = nextByte();
+                auto arg2 = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_UNKNOWN_35 $%02X, $%04X"(arg1, arg2);
+                break;
+            case 0x36:
+                auto arg1 = nextByte();
+                auto arg2 = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_UNKNOWN_36 $%02X, $%04X"(arg1, arg2);
+                break;
+            case 0x37:
+                auto arg1 = nextByte();
+                auto arg2 = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_UNKNOWN_37 $%02X, $%04X"(arg1, arg2);
+                break;
+            case 0x38:
+                auto arg1 = nextByte();
+                auto arg2 = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_UNKNOWN_38 $%02X, $%04X"(arg1, arg2);
+                break;
+            case 0x39:
+                outFile.writeln("\tEBMOVE_SET_VELOCITIES_ZERO");
+                break;
+            case 0x3A:
+                auto arg = nextByte();
+                outFile.writefln!"\tEBMOVE_UNKNOWN_3A $%02X"(arg);
+                break;
+            case 0x3B:
+                auto arg = nextByte();
+                outFile.writefln!"\tEBMOVE_SET_10F2 $%02X"(arg);
+                break;
+            case 0x3C:
+                outFile.writeln("\tEBMOVE_INC_10F2");
+                break;
+            case 0x3D:
+                outFile.writeln("\tEBMOVE_DEC_10F2");
+                break;
+            case 0x3E:
+                auto arg = nextByte();
+                outFile.writefln!"\tEBMOVE_INC_10F2_BY $%02X"(arg);
+                break;
+            case 0x3F:
+                auto arg = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_SET_X_VELOCITY $%04X"(arg);
+                break;
+            case 0x40:
+                auto arg = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_SET_Y_VELOCITY $%04X"(arg);
+                break;
+            case 0x41:
+                auto arg = nextByte() + (nextByte()<<8);
+                outFile.writefln!"\tEBMOVE_SET_Z_VELOCITY $%04X"(arg);
+                break;
+            case 0x42:
+                auto routine = nextByte() + (nextByte()<<8) + (nextByte()<<16);
+                ulong argCount;
+                ubyte[] args;
+                switch (routine) {
+                    case 0xC0AA07, 0xC0AA23, 0xC0A9B3, 0xC0A9CF, 0xC0A9EB:
+                        argCount = 6;
+                        break;
+                    case 0xC0A912:
+                        argCount = 5;
+                        break;
+                    case 0xC05E76, 0xC0A87A, 0xC0A88D, 0xC0A8A0, 0xC0A8B3, 0xC0A964, 0xC0A98B, 0xC0AAB5, 0xC0A977, 0xC0A99F:
+                        argCount = 4;
+                        break;
+                    case 0xC0AA3F:
+                        argCount = 3;
+                        break;
+                    case 0xC09E71, 0xC09FAE, 0xC09FBB, 0xC0A643, 0xC0A685, 0xC0A6A2, 0xC0A6AD, 0xC0A841, 0xC0A84C, 0xC0A857, 0xC0A86F, 0xC0A92D, 0xC0A938, 0xC0A94E, 0xC0A959, 0xC0AA6E:
+                        argCount = 2;
+                        break;
+                    case 0xC0A651, 0xC0A679, 0xC0A697, 0xC0A864, 0xC0A907, 0xC0A943:
+                        argCount = 1;
+                        break;
+                    case 0xC09F82:
+                        args ~= nextByte();
+                        argCount = args[0]*2;
+                        break;
+                    case 0xC020F1, 0xC0F3B2, 0xC0F3E8, 0xC46E46, 0xC2DB3F, 0xC0ED5C, 0xC09451, 0xC0A4A8, 0xC0A4BF, 0xC0D77F, 0xC2654C, 0xC03F1E, 0xC0A82F, 0xC0D7C7, 0xC0C48F, 0xC0C7DB,
+                        0xC0A65F, 0xC0A8FF, 0xC0A8F7, 0xC0A8C6, 0xC474A8, 0xC47A9E, 0xC0A6B8, 0xC0C6B6, 0xC0C83B, 0xC468A9, 0xC46C45, 0xC468B5, 0xC0C4AF, 0xC0A673, 0xC0C682, 0xC46B0A,
+                        0xC0CC11, 0xC47044, 0xC4978E, 0xC46E74, 0xC20000, 0xC30100, 0xC49EC4, 0xC46B2D, 0xC0A4B2, 0xC0CCCC, 0xC0D0D9, 0xC2EACF, 0xC1FFD3, 0xC2EA15, 0xC46ADB, 0xC46B65,
+                        0xC0C62B, 0xC0A8DC, 0xC46B51, 0xC4248A, 0xC423DC, 0xC4730E, 0xC0A8E7, 0xC09FA8, 0xC0A6D1, 0xC0D0E6, 0xC0C353, 0xC0A6DA, 0xC0CD50, 0xC0A6E3, 0xEF027D, 0xC03DAA,
+                        0xC4ECE7, 0xC425F3, 0xC47333, 0xC47499, 0xC04EF0, 0xEF0C87, 0xEF0C97, 0xC4258C, 0xEFE556, 0xC0C4F7, 0xC47B77, 0xC46D4B, 0xC4800B, 0xC0AAAC, 0xEF0D46, 0xC4733C,
+                        0xC4734C, 0xC4981F, 0xC0A838, 0xC468DC, 0xEF0D73, 0xC46A6E, 0xC47369, 0xC4E2D7, 0xC4DDD0:
+                        break;
+                    default:
+                        writefln!"UNKNOWN ROUTINE %06X, ASSUMING 0 ARGS"(routine);
+                        break;
+                }
+                foreach (i; 0..argCount) {
+                    args ~= nextByte();
+                }
+                outFile.writefln!"\tEBMOVE_CALLROUTINE $%06X%(, $%02X%)"(routine, args);
+                break;
+            case 0x43:
+                auto arg = nextByte();
+                outFile.writefln!"\tEBMOVE_UNKNOWN_43 $%02X"(arg);
+                break;
+            case 0x44:
+                outFile.writeln("\tEBMOVE_WRITE_TEMPVAR_WAITTIMER");
+                break;
+            default:
+                outFile.writefln!"UNHANDLED: %02X"(cc);
+                break;
+        }
     }
 }
 
@@ -759,7 +1112,7 @@ void parseTextData(string baseName, ubyte[] source, ulong offset, bool usa) {
                     case 0x00:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        outFile.writefln!"\tEBTEXT_PLAY_MUSIC $%02X, $%02X"(arg, arg2);
+                        outFile.writefln!"\tEBTEXT_PLAY_MUSIC $%02X, MUSIC::%s"(arg, musicTracks[arg2]);
                         break;
                     case 0x01:
                         auto arg = nextByte();
