@@ -2,11 +2,12 @@ import std.file;
 import std.path;
 import std.stdio;
 import std.string;
+import std.range;
 
 import usa;
 import jpn;
 import common;
-
+version = compressedOutput;
 bool isHeaderedEBROM(const ubyte[] data) pure @safe {
 	return ((data[0x101DC]^data[0x101DE]) == 0xFF) && ((data[0x101DD]^data[0x101DF]) == 0xFF) && //Header checksum
 		(data[0x101C0..0x101D5] == "EARTH BOUND          ");
@@ -57,33 +58,324 @@ void main(string[] args) {
 		return;
 	}
 	foreach (entry; usa ? usaEntries : jpnEntries) {
-        writefln!"Dumping %s/%s"(entry.subdir, entry.name);
-		dumpData(rom, entry, outPath, usa);
-	}
+        dumpData(rom, entry, outPath, usa);
+    }
 }
 
 void dumpData(ubyte[] source, const DumpInfo info, string outPath, bool usa) {
-	import std.conv : text;
-	assert(source.length == 0x300000, "ROM size too small: Got "~source.length.text);
-	assert(info.offset <= 0x300000, "Starting offset too high while attempting to write "~info.subdir~"/"~info.name);
-	assert(info.offset+info.size <= 0x300000, "Size too high while attempting to write "~info.subdir~"/"~info.name);
-	auto outDir = buildPath(outPath, info.subdir);
-	if (!outDir.exists) {
-		mkdirRecurse(outDir);
-	}
-    if (info.subdir == "text_data") {
-        parseTextData(buildPath(outDir, info.name), source[info.offset..info.offset+info.size], info.offset+0xC00000, usa);
-    } else if (info.subdir == "movements") {
-        //parseMovement(buildPath(outDir, info.name), source[info.offset..info.offset+info.size], info.offset+0xC00000, usa);
-    } else {
-    	auto outFile = File(buildPath(outDir, setExtension(info.name, "bin")), "w");
-    	outFile.rawWrite(source[info.offset..info.offset+info.size]);
+    import std.conv : text;
+    assert(source.length == 0x300000, "ROM size too small: Got "~source.length.text);
+    assert(info.offset <= 0x300000, "Starting offset too high while attempting to write "~info.subdir~"/"~info.name);
+    assert(info.offset+info.size <= 0x300000, "Size too high while attempting to write "~info.subdir~"/"~info.name);
+    auto outDir = buildPath(outPath, info.subdir);
+    if (!outDir.exists) {
+        mkdirRecurse(outDir);
+    }
+    auto data = source[info.offset..info.offset+info.size];
+    auto offset = info.offset+0xC00000;
+    auto path = buildPath(outDir, info.name);
+
+    switch (info.extension) {
+        case "ebtxt":
+            writeFile!parseTextData(path, info.extension, data, offset, usa);
+            break;
+        case "npcconfig":
+            writeFile!parseNPCConfig(path, info.extension, data, offset, usa);
+            break;
+        case "flyover":
+            writeFile!parseFlyover(path, info.extension, data, offset, usa);
+            break;
+        case "enemyconfig":
+            writeFile!parseEnemyConfig(path, info.extension, data, offset, usa);
+            break;
+        case "itemconfig":
+            writeFile!parseItemConfig(path, info.extension, data, offset, usa);
+            break;
+        case "distortion":
+            writeFile!parseDistortion(path, info.extension, data, offset, usa);
+            break;
+        case "movement":
+            writeFile!parseMovement(path, info.extension, data, offset, usa);
+            break;
+        case "stafftext":
+            writeFile!parseStaffText(path, info.extension, data, offset, usa);
+            break;
+        default:
+            writeFile!writeRaw(path, info.extension, data, offset, usa);
+            break;
     }
 }
 
 immutable string[] musicTracks = import("music.txt").split("\n");
+immutable string[] eventFlags = import("eventflags.txt").split("\n");
+immutable string[] directions = [
+    "UP",
+    "UP_RIGHT",
+    "RIGHT",
+    "DOWN_RIGHT",
+    "DOWN",
+    "DOWN_LEFT",
+    "LEFT",
+    "UP_LEFT"
+];
+immutable string[] genders = [
+    "NULL",
+    "MALE",
+    "FEMALE",
+    "NEUTRAL"
+];
+immutable string[] enemyTypes = [
+    "NORMAL",
+    "INSECT",
+    "METAL"
+];
 
-void parseMovement(string baseName, ubyte[] source, ulong offset, bool usa) {
+immutable string[] itemFlags = [
+    "NESS_CAN_USE",
+    "PAULA_CAN_USE",
+    "JEFF_CAN_USE",
+    "POO_CAN_USE",
+    "TRANSFORM",
+    "CANNOT_GIVE",
+    "UNKNOWN",
+    "CONSUMED_ON_USE"
+];
+
+void writeFile(alias func)(string baseName, string extension, ubyte[] source, ulong offset, bool usa) {
+    writefln!"Dumping %s.%s"(baseName, extension);
+    func(baseName, extension, source, offset, usa);
+}
+void writeRaw(string baseName, string extension, ubyte[] source, ulong offset, bool usa) {
+	auto outFile = File(setExtension(baseName, extension), "w");
+	outFile.rawWrite(source);
+}
+
+void parseNPCConfig(string baseName, string, ubyte[] source, ulong offset, bool usa) {
+    import std.range:  chunks;
+    auto outFile = File(setExtension(baseName, "npcconfig"), "w");
+    void printPointer(ubyte[] data) {
+        auto ptr = data[0] + (data[1]<<8) + (data[2]<<16);
+        if (ptr == 0) {
+            outFile.writefln!"  .DWORD NULL"();
+        } else {
+            outFile.writefln!"  .DWORD TEXT_BLOCK_%06X"(ptr);
+        }
+    }
+    foreach (entry; source.chunks(17)) {
+        string npcType;
+        bool secondaryPointer;
+        switch (entry[0]) {
+            case 1:
+                npcType = "PERSON";
+                break;
+            case 2:
+                npcType = "ITEM_BOX";
+                break;
+            case 3:
+                npcType = "OBJECT";
+                secondaryPointer = true;
+                break;
+            default: npcType = "ERROR"; break;
+        }
+        outFile.writefln!"  .BYTE NPC_TYPE::%s"(npcType);
+        outFile.writefln!"  .WORD $%04X"(entry[1] + (entry[2]<<8));
+        outFile.writefln!"  .BYTE DIRECTION::%s"(directions[entry[3]]);
+        outFile.writefln!"  .BYTE $%02X"(entry[4]);
+        outFile.writefln!"  .BYTE $%02X"(entry[5]);
+        outFile.writefln!"  .WORD EVENT_FLAG::%s"(eventFlags[entry[6] + (entry[7]<<8)]);
+        outFile.writefln!"  .BYTE $%02X"(entry[8]);
+        printPointer(entry[9..13]);
+        if (secondaryPointer) {
+            printPointer(entry[13..17]);
+        } else {
+            outFile.writefln!"  .BYTE $%02X, $%02X, $%02X, $%02X"(entry[13], entry[14], entry[15], entry[16]);
+        }
+        outFile.writeln();
+    }
+}
+auto decodeText(const ubyte[] data, const string[ubyte] table) {
+    struct Result {
+        void toString(T)(T sink) const if (isOutputRange!(T, const(char))) {
+            import std.conv : text;
+            foreach (chr; data) {
+                if (chr in table) {
+                    put(sink, table[chr]);
+                } else {
+                    if (chr != 0) {
+                        //assert(0, "???: "~chr.text);
+                    }
+                }
+            }
+        }
+    }
+    return Result();
+}
+immutable string[] distortionStyles = [
+    "NONE",
+    "HORIZONTAL_SMOOTH",
+    "HORIZONTAL_INTERLACED",
+    "VERTICAL_SMOOTH",
+    "UNKNOWN"
+];
+void parseDistortion(string baseName, string ext, ubyte[] source, ulong offset, bool usa) {
+    auto outFile = File(setExtension(baseName, ext), "w");
+    foreach (entry; source.chunks(17)) {
+        size_t index;
+        ubyte nextByte() {
+            scope(exit) index++;
+            return entry[index];
+        }
+        ushort nextShort() {
+            scope(exit) index += 2;
+            return entry[index] + (entry[index+1]<<8);
+        }
+        uint nextInt() {
+            scope(exit) index += 4;
+            return entry[index] + (entry[index+1]<<8) + (entry[index+2]<<16) + (entry[index+3]<<24);
+        }
+        outFile.writefln!"  .BYTE $%02X ;Unknown"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Unknown"(nextByte());
+        outFile.writefln!"  .BYTE DISTORTION_STYLE::%s"(distortionStyles[nextByte()]);
+        outFile.writefln!"  .WORD $%04X ;Ripple frequency"(nextShort());
+        outFile.writefln!"  .WORD $%04X ;Ripple amplitude"(nextShort());
+        outFile.writefln!"  .BYTE $%02X ;Unknown"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Unknown"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Unknown"(nextByte());
+        outFile.writefln!"  .WORD $%04X ;Ripple frequency acceleration"(nextShort());
+        outFile.writefln!"  .WORD $%04X ;Ripple amplitude acceleration"(nextShort());
+        outFile.writefln!"  .BYTE $%02X ;Speed"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Unknown"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Unknown"(nextByte());
+        outFile.writeln();
+    }
+}
+void parseEnemyConfig(string baseName, string, ubyte[] source, ulong offset, bool usa) {
+    import std.range:  chunks;
+    auto outFile = File(setExtension(baseName, "enemyconfig"), "w");
+    immutable string[ubyte] table = usa ? usTable : jpTable;
+    void printPointer(uint ptr) {
+        //auto ptr = data[0] + (data[1]<<8) + (data[2]<<16);
+        if (ptr == 0) {
+            outFile.writefln!"  .DWORD NULL"();
+        } else {
+            outFile.writefln!"  .DWORD TEXT_BLOCK_%06X"(ptr);
+        }
+    }
+    foreach (entry; source.chunks(94)) {
+        size_t index;
+        ubyte nextByte() {
+            scope(exit) index++;
+            return entry[index];
+        }
+        ushort nextShort() {
+            scope(exit) index += 2;
+            return entry[index] + (entry[index+1]<<8);
+        }
+        uint nextInt() {
+            scope(exit) index += 4;
+            return entry[index] + (entry[index+1]<<8) + (entry[index+2]<<16) + (entry[index+3]<<24);
+        }
+        outFile.writefln!"  .BYTE $%02X ;The Flag"(nextByte());
+        outFile.writefln!"  PADDEDEBTEXT \"%s\", 25"(decodeText(entry[1..25], table));
+        index = 26;
+        outFile.writefln!"  .BYTE GENDER::%s"(genders[nextByte()]);
+        outFile.writefln!"  .BYTE ENEMYTYPE::%s"(enemyTypes[nextByte()]);
+        outFile.writefln!"  .WORD $%04X ;Battle sprite"(nextShort());
+        outFile.writefln!"  .WORD $%04X ;Out-of-battle sprite"(nextShort());
+        outFile.writefln!"  .BYTE $%02X ;Run flag"(nextByte());
+        outFile.writefln!"  .WORD %s ;HP"(nextShort());
+        outFile.writefln!"  .WORD %s ;PP"(nextShort());
+        outFile.writefln!"  .DWORD %s ;Experience"(nextInt());
+        outFile.writefln!"  .WORD %s ;Money"(nextShort());
+        outFile.writefln!"  .WORD $%04X ;Movement"(nextShort());
+        printPointer(nextInt());
+        printPointer(nextInt());
+        //index = 53;
+        outFile.writefln!"  .BYTE $%02X ;Palette"(nextByte());
+        outFile.writefln!"  .BYTE %s ;Level"(nextByte());
+        outFile.writefln!"  .BYTE MUSIC::%s"(musicTracks[nextByte()]);
+        outFile.writefln!"  .WORD %s ;Offense"(nextShort());
+        outFile.writefln!"  .WORD %s ;Defense"(nextShort());
+        outFile.writefln!"  .BYTE %s ;Speed"(nextByte());
+        outFile.writefln!"  .BYTE %s ;Guts"(nextByte());
+        outFile.writefln!"  .BYTE %s ;Luck"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Weakness to fire"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Weakness to ice"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Weakness to flash"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Weakness to paralysis"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Weakness to hypnosis/brainshock"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Miss rate"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Action order"(nextByte());
+        outFile.writefln!"  .WORD $%04X ;Action 1"(nextShort());
+        outFile.writefln!"  .WORD $%04X ;Action 2"(nextShort());
+        outFile.writefln!"  .WORD $%04X ;Action 3"(nextShort());
+        outFile.writefln!"  .WORD $%04X ;Action 4"(nextShort());
+        outFile.writefln!"  .WORD $%04X ;Final action"(nextShort());
+        outFile.writefln!"  .BYTE $%02X ;Action 1 argument"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Action 2 argument"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Action 3 argument"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Action 4 argument"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Final action argument"(nextByte());
+        outFile.writefln!"  .BYTE %s ;IQ"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Boss flag"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Item drop rate"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Item dropped"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Initial status"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Death style"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Row"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Max number of allies called"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Mirror success rate"(nextByte());
+        outFile.writeln();
+    }
+}
+void parseItemConfig(string baseName, string, ubyte[] source, ulong offset, bool usa) {
+    import std.algorithm : map;
+    import std.bitmanip : bitsSet;
+    import std.range:  chunks;
+    auto outFile = File(setExtension(baseName, "itemconfig"), "w");
+    immutable string[ubyte] table = usa ? usTable : jpTable;
+    void printPointer(uint ptr) {
+        if (ptr == 0) {
+            outFile.writefln!"  .DWORD NULL"();
+        } else {
+            outFile.writefln!"  .DWORD TEXT_BLOCK_%06X"(ptr);
+        }
+    }
+    foreach (entry; source.chunks(39)) {
+        size_t index;
+        ubyte nextByte() {
+            scope(exit) index++;
+            return entry[index];
+        }
+        ushort nextShort() {
+            scope(exit) index += 2;
+            return entry[index] + (entry[index+1]<<8);
+        }
+        uint nextInt() {
+            scope(exit) index += 4;
+            return entry[index] + (entry[index+1]<<8) + (entry[index+2]<<16) + (entry[index+3]<<24);
+        }
+        outFile.writefln!"  PADDEDEBTEXT \"%s\", 25"(decodeText(entry[0..24], table));
+        index = 25;
+        outFile.writefln!"  .BYTE $%02X ;Type"(nextByte());
+        outFile.writefln!"  .WORD %s ;Cost"(nextShort());
+        auto flags = nextByte();
+        if (flags == 0) {
+            outFile.writeln("  .BYTE $00 ;Flags");
+        } else {
+            outFile.writefln!"  .BYTE %-(ITEM_FLAGS::%s | %)"(flags.bitsSet().map!(x => itemFlags[x]));
+        }
+        outFile.writefln!"  .WORD $%04X ;Effect"(nextShort());
+        outFile.writefln!"  .BYTE $%02X ;Strength"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;EPI"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;EP"(nextByte());
+        outFile.writefln!"  .BYTE $%02X ;Special"(nextByte());
+        printPointer(nextInt());
+        outFile.writeln();
+    }
+}
+
+void parseMovement(string baseName, string, ubyte[] source, ulong offset, bool usa) {
     import std.array : empty, front, popFront;
     auto outFile = File(setExtension(baseName, "movement"), "w");
     auto nextByte() {
@@ -387,7 +679,7 @@ void parseMovement(string baseName, ubyte[] source, ulong offset, bool usa) {
                     case 0xC05E76, 0xC0A87A, 0xC0A88D, 0xC0A8A0, 0xC0A8B3, 0xC0A964, 0xC0A98B, 0xC0AAB5, 0xC0A977, 0xC0A99F:
                         argCount = 4;
                         break;
-                    case 0xC0AA3F:
+                    case 0xC0AA3F, 0xC0AAD5:
                         argCount = 3;
                         break;
                     case 0xC09E71, 0xC09FAE, 0xC09FBB, 0xC0A643, 0xC0A685, 0xC0A6A2, 0xC0A6AD, 0xC0A841, 0xC0A84C, 0xC0A857, 0xC0A86F, 0xC0A92D, 0xC0A938, 0xC0A94E, 0xC0A959, 0xC0AA6E:
@@ -430,22 +722,22 @@ void parseMovement(string baseName, ubyte[] source, ulong offset, bool usa) {
     }
 }
 
-void parseTextData(string baseName, ubyte[] source, ulong offset, bool usa) {
+void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool usa) {
+    import std.algorithm.searching : canFind;
     import std.array : empty, front, popFront;
     auto outFile = File(setExtension(baseName, "ebtxt"), "w");
     auto symbolFile = File(setExtension(baseName, "symbols.asm"), "w");
     outFile.writefln!".INCLUDE \"%s\"\n"(setExtension(baseName.baseName, "symbols.asm"));
     string tmpbuff;
     immutable string[ubyte] table = usa ? usTable : jpTable;
+    immutable uint[] forcedLabels = usa ? usForceTextLabels : jpForceTextLabels;
+    bool labelPrinted;
     auto nextByte() {
+        labelPrinted = false;
         auto first = source.front;
         source.popFront();
         offset++;
         return first;
-    }
-    void printLabel() {
-        symbolFile.writefln!".GLOBAL TEXT_BLOCK_%06X: far"(offset);
-        outFile.writefln!"TEXT_BLOCK_%06X: ;$%06X"(offset, offset);
     }
     void flushBuff() {
         if (tmpbuff == []) {
@@ -454,8 +746,20 @@ void parseTextData(string baseName, ubyte[] source, ulong offset, bool usa) {
         outFile.writefln!"\tEBTEXT \"%s\""(tmpbuff);
         tmpbuff = [];
     }
+    void printLabel() {
+        if (labelPrinted || source.empty) {
+            return;
+        }
+        flushBuff();
+        symbolFile.writefln!".GLOBAL TEXT_BLOCK_%06X: far"(offset);
+        outFile.writefln!"TEXT_BLOCK_%06X: ;$%06X"(offset, offset);
+        labelPrinted = true;
+    }
     printLabel();
     while (!source.empty) {
+        if (forcedLabels.canFind(offset)) {
+            printLabel();
+        }
         auto first = nextByte();
         if (first in table) {
             tmpbuff ~= table[first];
@@ -482,28 +786,28 @@ void parseTextData(string baseName, ubyte[] source, ulong offset, bool usa) {
             case 0x04:
                 flushBuff();
                 auto flag = nextByte() + (nextByte()<<8);
-                outFile.writefln!"\tEBTEXT_SET_EVENT_FLAG $%04X"(flag);
+                outFile.writefln!"\tEBTEXT_SET_EVENT_FLAG EVENT_FLAG::%s"(eventFlags[flag]);
                 break;
             case 0x05:
                 flushBuff();
                 auto flag = nextByte() + (nextByte()<<8);
-                outFile.writefln!"\tEBTEXT_CLEAR_EVENT_FLAG $%04X"(flag);
+                outFile.writefln!"\tEBTEXT_CLEAR_EVENT_FLAG EVENT_FLAG::%s"(eventFlags[flag]);
                 break;
             case 0x06:
                 flushBuff();
                 auto flag = nextByte() + (nextByte()<<8);
                 auto dest = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                outFile.writefln!"\tEBTEXT_JUMP_IF_FLAG_SET $%06X, $%04X"(dest, flag);
+                outFile.writefln!"\tEBTEXT_JUMP_IF_FLAG_SET TEXT_BLOCK_%06X, EVENT_FLAG::%s"(dest, eventFlags[flag]);
                 break;
             case 0x07:
                 flushBuff();
                 auto flag = nextByte() + (nextByte()<<8);
-                outFile.writefln!"\tEBTEXT_CHECK_EVENT_FLAG $%04X"(flag);
+                outFile.writefln!"\tEBTEXT_CHECK_EVENT_FLAG EVENT_FLAG::%s"(eventFlags[flag]);
                 break;
             case 0x08:
                 flushBuff();
                 auto dest = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                outFile.writefln!"\tEBTEXT_CALL_TEXT $%06X"(dest);
+                outFile.writefln!"\tEBTEXT_CALL_TEXT TEXT_BLOCK_%06X"(dest);
                 break;
             case 0x09:
                 flushBuff();
@@ -512,12 +816,12 @@ void parseTextData(string baseName, ubyte[] source, ulong offset, bool usa) {
                 while(argCount--) {
                     dests ~= nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
                 }
-                outFile.writefln!"\tEBTEXT_JUMP_MULTI %($%06X%|, %)"(dests);
+                outFile.writefln!"\tEBTEXT_JUMP_MULTI %(TEXT_BLOCK_%06X%|, %)"(dests);
                 break;
             case 0x0A:
                 flushBuff();
                 auto dest = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                outFile.writefln!"\tEBTEXT_JUMP $%06X"(dest);
+                outFile.writefln!"\tEBTEXT_JUMP TEXT_BLOCK_%06X\n"(dest);
                 break;
             case 0x0B:
                 flushBuff();
@@ -565,12 +869,15 @@ void parseTextData(string baseName, ubyte[] source, ulong offset, bool usa) {
                 outFile.writeln("\tEBTEXT_HALT_WITH_PROMPT_ALWAYS");
                 break;
             case 0x15: .. case 0x17:
-                flushBuff();
+                version (compressedOutput) flushBuff();
                 if (usa) {
                     auto arg = nextByte();
                     auto id = ((first - 0x15)<<8) + arg;
-                    outFile.writefln!"\tEBTEXT_COMPRESSED_BANK_%d $%02X ;\"%s\""(first-0x14, arg, compressed[id]);
-                    //tmpbuff ~= compressed[id];
+                    version(compressedOutput) {
+                        outFile.writefln!"\tEBTEXT_COMPRESSED_BANK_%d $%02X ;\"%s\""(first-0x14, arg, compressed[id]);
+                    } else {
+                        tmpbuff ~= compressed[id];
+                    }
                 } else {
                     outFile.writefln!"UNHANDLED: %02X"(first);
                 }
@@ -778,11 +1085,11 @@ void parseTextData(string baseName, ubyte[] source, ulong offset, bool usa) {
                         break;
                     case 0x02:
                         auto dest = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                        outFile.writefln!"\tEBTEXT_JUMP_IF_FALSE $%08X"(dest);
+                        outFile.writefln!"\tEBTEXT_JUMP_IF_FALSE TEXT_BLOCK_%06X"(dest);
                         break;
                     case 0x03:
                         auto dest = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                        outFile.writefln!"\tEBTEXT_JUMP_IF_TRUE $%08X"(dest);
+                        outFile.writefln!"\tEBTEXT_JUMP_IF_TRUE TEXT_BLOCK_%06X"(dest);
                         break;
                     case 0x04:
                         outFile.writeln("\tEBTEXT_SWAP_WORKING_AND_ARG_MEMORY");
@@ -1255,7 +1562,7 @@ void parseTextData(string baseName, ubyte[] source, ulong offset, bool usa) {
                         auto arg = nextByte();
                         auto arg2 = nextByte();
                         auto arg3 = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                        outFile.writefln!"\tEBTEXT_ACTIVATE_HOTSPOT $%02X, $%02X, $%06X"(arg, arg2, arg3);
+                        outFile.writefln!"\tEBTEXT_ACTIVATE_HOTSPOT $%02X, $%02X, TEXT_BLOCK_%06X"(arg, arg2, arg3);
                         break;
                     case 0x67:
                         auto arg = nextByte();
@@ -1296,7 +1603,7 @@ void parseTextData(string baseName, ubyte[] source, ulong offset, bool usa) {
                         while(argCount--) {
                             dests ~= nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
                         }
-                        outFile.writefln!"\tEBTEXT_JUMP_MULTI2 %($%06X%|, %)"(dests);
+                        outFile.writefln!"\tEBTEXT_JUMP_MULTI2 %(TEXT_BLOCK_%06X%|, %)"(dests);
                         break;
                     case 0xD0:
                         auto arg = nextByte();
@@ -1394,6 +1701,121 @@ void parseTextData(string baseName, ubyte[] source, ulong offset, bool usa) {
                         outFile.writefln!"UNHANDLED: 1F %02X"(subCC);
                         break;
                 }
+                break;
+            default:
+                outFile.writefln!"UNHANDLED: %02X"(first);
+                break;
+        }
+    }
+}
+
+void parseFlyover(string baseName, string, ubyte[] source, ulong offset, bool usa) {
+    import std.array : empty, front, popFront;
+    auto outFile = File(setExtension(baseName, "flyover"), "w");
+    auto symbolFile = File(setExtension(baseName, "symbols.asm"), "w");
+    outFile.writefln!".INCLUDE \"%s\"\n"(setExtension(baseName.baseName, "symbols.asm"));
+    string tmpbuff;
+    immutable string[ubyte] table = usa ? usTable : jpTable;
+    auto nextByte() {
+        auto first = source.front;
+        source.popFront();
+        offset++;
+        return first;
+    }
+    void printLabel() {
+        symbolFile.writefln!".GLOBAL FLYOVER_%06X: far"(offset);
+        outFile.writefln!"FLYOVER_%06X: ;$%06X"(offset, offset);
+    }
+    void flushBuff() {
+        if (tmpbuff == []) {
+            return;
+        }
+        outFile.writefln!"\tEBTEXT \"%s\""(tmpbuff);
+        tmpbuff = [];
+    }
+    printLabel();
+    while (!source.empty) {
+        auto first = nextByte();
+        if (first in table) {
+            tmpbuff ~= table[first];
+            continue;
+        }
+        flushBuff();
+        switch (first) {
+            case 0x00:
+                outFile.writeln("\tEBFLYOVER_END");
+                if (!source.empty) {
+                    outFile.writeln();
+                    printLabel();
+                }
+                break;
+            case 0x01:
+                auto arg = nextByte();
+                outFile.writefln!"\tEBFLYOVER_01 $%02X"(arg);
+                break;
+            case 0x02:
+                auto arg = nextByte();
+                outFile.writefln!"\tEBFLYOVER_02 $%02X"(arg);
+                break;
+            case 0x08:
+                auto arg = nextByte();
+                outFile.writefln!"\tEBFLYOVER_08 $%02X"(arg);
+                break;
+            case 0x09:
+                outFile.writeln("\tEBFLYOVER_09");
+                break;
+            default:
+                outFile.writefln!"UNHANDLED: %02X"(first);
+                break;
+        }
+    }
+}
+void parseStaffText(string baseName, string, ubyte[] source, ulong offset, bool usa) {
+    import std.array : empty, front, popFront;
+    auto outFile = File(setExtension(baseName, "stafftext"), "w");
+    immutable string[ubyte] table = usa ? usStaffTable : jpStaffTable;
+    auto nextByte() {
+        auto first = source.front;
+        source.popFront();
+        offset++;
+        return first;
+    }
+    while (!source.empty) {
+        auto first = nextByte();
+        switch (first) {
+            case 0x01:
+                string tmpbuff;
+                auto arg = nextByte();
+                while (arg != 0) {
+                    if (arg !in table) {
+                        writeln(arg);
+                    }
+                    tmpbuff ~= table[arg];
+                    arg = nextByte();
+                }
+                outFile.writefln!"\tEBSTAFF_SMALLTEXT \"%s\""(tmpbuff);
+                break;
+            case 0x02:
+                string tmpbuff;
+                auto arg = nextByte();
+                while (arg != 0) {
+                    if (arg !in table) {
+                        writeln(arg);
+                    }
+                    tmpbuff ~= table[arg];
+                    arg = nextByte();
+                }
+                outFile.writefln!"\tEBSTAFF_BIGTEXT \"%s\""(tmpbuff);
+                break;
+            case 0x03:
+                auto arg = nextByte();
+                outFile.writefln!"\tEBSTAFF_VERTICALSPACE $%02X"(arg);
+                break;
+            case 0x04:
+                outFile.writefln!"\tEBSTAFF_PRINTPLAYER"();
+                break;
+            case 0xFF:
+                outFile.writefln!"\tEBSTAFF_ENDCREDITS"();
                 break;
             default:
                 outFile.writefln!"UNHANDLED: %02X"(first);

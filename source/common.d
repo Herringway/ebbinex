@@ -5,4 +5,5 @@ struct DumpInfo {
 	string name;
 	ulong offset;
 	ulong size;
+	string extension = "bin";
 }
