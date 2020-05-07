@@ -40,29 +40,104 @@ void main(string[] args) {
 		stderr.writeln("File too small to be an Earthbound ROM.");
 		return;
 	}
-    bool usa;
-	if (rom.isHeaderedEBROM) {
-		writeln("Detected Earthbound (USA) (With 512 byte copier header)");
-		rom = rom[0x200..$];
-        usa = true;
-	} else if (rom.isUnHeaderedEBROM) {
-		writeln("Detected Earthbound (USA)");
-        usa = true;
-    } else if (rom.isHeaderedMO2ROM) {
-        writeln("Detected Mother 2 (JP) (With 512 byte copier header)");
-		rom = rom[0x200..$];
-	} else if (rom.isUnHeaderedMO2ROM) {
-		stderr.writeln("Detected Mother 2 (JP)");
-	} else {
-		stderr.writeln("Unsupported file. (Header checksum mismatch)");
-		return;
-	}
-	foreach (entry; usa ? usaEntries : jpnEntries) {
-        dumpData(rom, entry, outPath, usa);
+    const detected = rom.detect();
+    final switch (detected.build) {
+        case Build.jpn:
+            write("Detected Mother 2 (JP)");
+            break;
+        case Build.usa:
+            write("Detected Earthbound (USA)");
+            break;
+        case Build.unknown:
+            stderr.writeln("Unrecognized ROM.");
+            return;
+    }
+    if (detected.header) {
+        rom = rom[0x200 .. $];
+        write(" (with 512 byte header)");
+    }
+    writeln();
+	foreach (entry; getDumpEntries(detected.build)) {
+        dumpData(rom, entry, outPath, detected.build);
     }
 }
 
-void dumpData(ubyte[] source, const DumpInfo info, string outPath, bool usa) {
+enum Build {
+    unknown,
+    jpn,
+    usa
+}
+
+auto getDumpEntries(const Build build) @safe pure {
+    final switch (build) {
+        case Build.jpn: return jpnData.entries;
+        case Build.usa: return usaData.entries;
+        case Build.unknown: assert(0);
+    }
+}
+auto getTextTable(const Build build) @safe pure {
+    final switch (build) {
+        case Build.jpn: return jpnData.table;
+        case Build.usa: return usaData.table;
+        case Build.unknown: assert(0);
+    }
+}
+auto getStaffTextTable(const Build build) @safe pure {
+    final switch (build) {
+        case Build.jpn: return jpnData.staffTable;
+        case Build.usa: return usaData.staffTable;
+        case Build.unknown: assert(0);
+    }
+}
+auto getRenameLabels(const Build build) @safe pure {
+    final switch (build) {
+        case Build.jpn: return jpnData.renameLabels;
+        case Build.usa: return usaData.renameLabels;
+        case Build.unknown: assert(0);
+    }
+}
+auto getForcedTextLabels(const Build build) @safe pure {
+    final switch (build) {
+        case Build.jpn: return jpnData.forceTextLabels;
+        case Build.usa: return usaData.forceTextLabels;
+        case Build.unknown: assert(0);
+    }
+}
+auto getCompressedStrings(const Build build) @safe pure {
+    final switch (build) {
+        case Build.jpn: assert(0);
+        case Build.usa: return usaData.compressed;
+        case Build.unknown: assert(0);
+    }
+}
+auto supportsCompressedText(const Build build) @safe pure {
+    final switch (build) {
+        case Build.jpn: return false;
+        case Build.usa: return true;
+        case Build.unknown: assert(0);
+    }
+}
+
+auto detect(const ubyte[] data) @safe pure {
+    struct Result {
+        bool header;
+        Build build;
+    }
+    foreach (headered, base; zip(only(false, true), only(0xFFB0, 0x101B0))) {
+        const checksum = (cast(const ushort[])data[base + 46 .. base + 48])[0];
+        const checksumComplement = (cast(const ushort[])data[base + 44 .. base + 46])[0];
+        if ((checksum ^ checksumComplement) == 0xFFFF) {
+            switch (cast(const(char[]))data[base + 16 .. base + 37]) {
+                case "EARTH BOUND          ": return Result(headered, Build.usa);
+                case "MOTHER-2             ": return Result(headered, Build.jpn);
+                default: break;
+            }
+        }
+    }
+    return Result(false, Build.unknown);
+}
+
+void dumpData(ubyte[] source, const DumpInfo info, string outPath, Build build) {
     import std.conv : text;
     assert(source.length == 0x300000, "ROM size too small: Got "~source.length.text);
     assert(info.offset <= 0x300000, "Starting offset too high while attempting to write "~info.subdir~"/"~info.name);
@@ -77,31 +152,31 @@ void dumpData(ubyte[] source, const DumpInfo info, string outPath, bool usa) {
 
     switch (info.extension) {
         case "ebtxt":
-            writeFile!parseTextData(path, info.extension, data, offset, usa);
+            writeFile!parseTextData(path, info.extension, data, offset, build);
             break;
         case "npcconfig":
-            writeFile!parseNPCConfig(path, info.extension, data, offset, usa);
+            writeFile!parseNPCConfig(path, info.extension, data, offset, build);
             break;
         case "flyover":
-            writeFile!parseFlyover(path, info.extension, data, offset, usa);
+            writeFile!parseFlyover(path, info.extension, data, offset, build);
             break;
         case "enemyconfig":
-            writeFile!parseEnemyConfig(path, info.extension, data, offset, usa);
+            writeFile!parseEnemyConfig(path, info.extension, data, offset, build);
             break;
         case "itemconfig":
-            writeFile!parseItemConfig(path, info.extension, data, offset, usa);
+            writeFile!parseItemConfig(path, info.extension, data, offset, build);
             break;
         case "distortion":
-            writeFile!parseDistortion(path, info.extension, data, offset, usa);
+            writeFile!parseDistortion(path, info.extension, data, offset, build);
             break;
         case "movement":
-            writeFile!parseMovement(path, info.extension, data, offset, usa);
+            writeFile!parseMovement(path, info.extension, data, offset, build);
             break;
         case "stafftext":
-            writeFile!parseStaffText(path, info.extension, data, offset, usa);
+            writeFile!parseStaffText(path, info.extension, data, offset, build);
             break;
         default:
-            writeFile!writeRaw(path, info.extension, data, offset, usa);
+            writeFile!writeRaw(path, info.extension, data, offset, build);
             break;
     }
 }
@@ -148,16 +223,16 @@ immutable string[] itemFlags = [
     "CONSUMED_ON_USE"
 ];
 
-void writeFile(alias func)(string baseName, string extension, ubyte[] source, ulong offset, bool usa) {
+void writeFile(alias func)(string baseName, string extension, ubyte[] source, ulong offset, Build build) {
     writefln!"Dumping %s.%s"(baseName, extension);
-    func(baseName, extension, source, offset, usa);
+    func(baseName, extension, source, offset, build);
 }
-void writeRaw(string baseName, string extension, ubyte[] source, ulong offset, bool usa) {
+void writeRaw(string baseName, string extension, ubyte[] source, ulong offset, Build build) {
 	auto outFile = File(setExtension(baseName, extension), "w");
 	outFile.rawWrite(source);
 }
 
-void parseNPCConfig(string baseName, string, ubyte[] source, ulong offset, bool usa) {
+void parseNPCConfig(string baseName, string, ubyte[] source, ulong offset, Build build) {
     import std.range:  chunks;
     auto outFile = File(setExtension(baseName, "npcconfig"), "w");
     void printPointer(ubyte[] data) {
@@ -224,7 +299,7 @@ immutable string[] distortionStyles = [
     "VERTICAL_SMOOTH",
     "UNKNOWN"
 ];
-void parseDistortion(string baseName, string ext, ubyte[] source, ulong offset, bool usa) {
+void parseDistortion(string baseName, string ext, ubyte[] source, ulong offset, Build build) {
     auto outFile = File(setExtension(baseName, ext), "w");
     foreach (entry; source.chunks(17)) {
         size_t index;
@@ -256,10 +331,10 @@ void parseDistortion(string baseName, string ext, ubyte[] source, ulong offset, 
         outFile.writeln();
     }
 }
-void parseEnemyConfig(string baseName, string, ubyte[] source, ulong offset, bool usa) {
+void parseEnemyConfig(string baseName, string, ubyte[] source, ulong offset, Build build) {
     import std.range:  chunks;
     auto outFile = File(setExtension(baseName, "enemyconfig"), "w");
-    immutable string[ubyte] table = usa ? usTable : jpTable;
+    immutable string[ubyte] table = getTextTable(build);
     void printPointer(uint ptr) {
         //auto ptr = data[0] + (data[1]<<8) + (data[2]<<16);
         if (ptr == 0) {
@@ -335,12 +410,12 @@ void parseEnemyConfig(string baseName, string, ubyte[] source, ulong offset, boo
         outFile.writeln();
     }
 }
-void parseItemConfig(string baseName, string, ubyte[] source, ulong offset, bool usa) {
+void parseItemConfig(string baseName, string, ubyte[] source, ulong offset, Build build) {
     import std.algorithm : map;
     import std.bitmanip : bitsSet;
     import std.range:  chunks;
     auto outFile = File(setExtension(baseName, "itemconfig"), "w");
-    immutable string[ubyte] table = usa ? usTable : jpTable;
+    immutable string[ubyte] table = getTextTable(build);
     void printPointer(uint ptr) {
         if (ptr == 0) {
             outFile.writefln!"  .DWORD NULL"();
@@ -382,7 +457,7 @@ void parseItemConfig(string baseName, string, ubyte[] source, ulong offset, bool
     }
 }
 
-void parseMovement(string baseName, string, ubyte[] source, ulong offset, bool usa) {
+void parseMovement(string baseName, string, ubyte[] source, ulong offset, Build build) {
     import std.array : empty, front, popFront;
     auto outFile = File(setExtension(baseName, "movement"), "w");
     auto nextByte() {
@@ -729,16 +804,16 @@ void parseMovement(string baseName, string, ubyte[] source, ulong offset, bool u
     }
 }
 
-void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool usa) {
+void parseTextData(string baseName, string, ubyte[] source, ulong offset, Build build) {
     import std.algorithm.searching : canFind;
     import std.array : empty, front, popFront;
     auto outFile = File(setExtension(baseName, "ebtxt"), "w");
     auto symbolFile = File(setExtension(baseName, "symbols.asm"), "w");
     outFile.writefln!".INCLUDE \"%s\"\n"(setExtension(baseName.baseName, "symbols.asm"));
     string tmpbuff;
-    immutable string[ubyte] table = usa ? usTable : jpTable;
-    immutable string[size_t] renameLabels = usa ? usRenameLabels : jpRenameLabels;
-    immutable uint[] forcedLabels = usa ? usForceTextLabels : jpForceTextLabels;
+    immutable string[ubyte] table = getTextTable(build);
+    immutable string[size_t] renameLabels = getRenameLabels(build);
+    immutable uint[] forcedLabels = getForcedTextLabels(build);
     bool labelPrinted;
     string label(const ulong addr) {
         return addr in renameLabels ? renameLabels[addr] : format!"TEXT_BLOCK_%06X"(addr);
@@ -883,13 +958,13 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
                 break;
             case 0x15: .. case 0x17:
                 version (compressedOutput) flushBuff();
-                if (usa) {
+                if (build.supportsCompressedText) {
                     auto arg = nextByte();
                     auto id = ((first - 0x15)<<8) + arg;
                     version(compressedOutput) {
-                        outFile.writefln!"\tEBTEXT_COMPRESSED_BANK_%d $%02X ;\"%s\""(first-0x14, arg, compressed[id]);
+                        outFile.writefln!"\tEBTEXT_COMPRESSED_BANK_%d $%02X ;\"%s\""(first-0x14, arg, getCompressedStrings(build)[id]);
                     } else {
-                        tmpbuff ~= compressed[id];
+                        tmpbuff ~= getCompressedStrings(build)[id];
                     }
                 } else {
                     outFile.writefln!"UNHANDLED: %02X"(first);
@@ -1722,13 +1797,13 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
     }
 }
 
-void parseFlyover(string baseName, string, ubyte[] source, ulong offset, bool usa) {
+void parseFlyover(string baseName, string, ubyte[] source, ulong offset, Build build) {
     import std.array : empty, front, popFront;
     auto outFile = File(setExtension(baseName, "flyover"), "w");
     auto symbolFile = File(setExtension(baseName, "symbols.asm"), "w");
     outFile.writefln!".INCLUDE \"%s\"\n"(setExtension(baseName.baseName, "symbols.asm"));
     string tmpbuff;
-    immutable string[ubyte] table = usa ? usTable : jpTable;
+    immutable string[ubyte] table = getTextTable(build);
     auto nextByte() {
         auto first = source.front;
         source.popFront();
@@ -1783,10 +1858,10 @@ void parseFlyover(string baseName, string, ubyte[] source, ulong offset, bool us
         }
     }
 }
-void parseStaffText(string baseName, string, ubyte[] source, ulong offset, bool usa) {
+void parseStaffText(string baseName, string, ubyte[] source, ulong offset, Build build) {
     import std.array : empty, front, popFront;
     auto outFile = File(setExtension(baseName, "stafftext"), "w");
-    immutable string[ubyte] table = usa ? usStaffTable : jpStaffTable;
+    immutable string[ubyte] table = getStaffTextTable(build);
     auto nextByte() {
         auto first = source.front;
         source.popFront();
