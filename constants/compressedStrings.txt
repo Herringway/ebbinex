@@ -476,7 +476,7 @@ nder
  se
 ant
 item
-`But
+@But
  sho
 in a 
 made 
@@ -491,7 +491,7 @@ hat
 and
 self
 ould
-`No
+@No
 car
  tr
  good
@@ -763,6 +763,6 @@ old
 eas
 , I
 iki
-`Ky
+@Ky
 @Ye
 spi

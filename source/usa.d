@@ -1,6 +1,6 @@
 module usa;
 
-import common;
+import dumpinfo;
 import std.array : split;
 
 immutable USA usaData;

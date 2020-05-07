@@ -1,6 +1,6 @@
 module jpn;
 
-import common;
+import dumpinfo;
 immutable JPN jpnData;
 
 struct JPN {
