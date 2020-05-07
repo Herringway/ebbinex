@@ -11,5 +11,8 @@ ebbinex-test-*
 *.exe
 *.o
 *.obj
+*.zip
+*.bmp
+*.bak
 *.lst
 bin
