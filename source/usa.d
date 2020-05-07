@@ -3055,6 +3055,7 @@ struct USA {
 
     immutable string[ubyte] table;
     immutable string[ubyte] staffTable;
+    immutable string[size_t] flyoverLabels;
 }
 
 shared static this() {
@@ -3118,6 +3119,16 @@ shared static this() {
         0xEF7655: "TEXT_BATTLE_DODGED",
         0xEF766E: "TEXT_BATTLE_IT_DIDNT_WORK_ON_X",
         0xEF7843: "TEXT_BATTLE_TIME_STARTED_AGAIN",
+    ];
+    usaData.flyoverLabels = [
+        0xE10B86: "FLYOVER_INTRO1",
+        0xE10B9C: "FLYOVER_INTRO2",
+        0xE10BC2: "FLYOVER_INTRO3",
+        0xE10BD2: "FLYOVER_WINTERS_INTRO1",
+        0xE10BFD: "FLYOVER_WINTERS_INTRO2",
+        0xE10C1B: "FLYOVER_DALAAM_INTRO1",
+        0xE10C38: "FLYOVER_DALAAM_INTRO2",
+        0xE10C61: "FLYOVER_ENDING",
     ];
 
     usaData.table = [

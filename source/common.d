@@ -59,6 +59,13 @@ auto supportsCompressedText(const Build build) @safe pure {
         case Build.unknown: assert(0);
     }
 }
+auto getFlyoverLabels(const Build build) @safe pure {
+    final switch (build) {
+        case Build.jpn: return jpnData.flyoverLabels;
+        case Build.usa: return usaData.flyoverLabels;
+        case Build.unknown: assert(0);
+    }
+}
 
 immutable string[] musicTracks = import("music.txt").split("\n");
 immutable string[] movements = import("movements.txt").split("\n");

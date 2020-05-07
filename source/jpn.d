@@ -3954,6 +3954,7 @@ struct JPN {
     immutable string[size_t] renameLabels;
     immutable string[ubyte] table;
     immutable string[ubyte] staffTable;
+    immutable string[size_t] flyoverLabels;
 }
 
 

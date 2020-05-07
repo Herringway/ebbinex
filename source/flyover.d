@@ -21,8 +21,10 @@ void parseFlyover(string baseName, string, ubyte[] source, ulong offset, Build b
         return first;
     }
     void printLabel() {
-        symbolFile.writefln!".GLOBAL FLYOVER_%06X: far"(offset);
-        outFile.writefln!"FLYOVER_%06X: ;$%06X"(offset, offset);
+        const label = offset in getFlyoverLabels(build);
+        auto symbol = label ? *label : format!"FLYOVER_%06X"(offset);
+        symbolFile.writefln!".GLOBAL %s: far"(symbol);
+        outFile.writefln!"%s: ;$%06X"(symbol, offset);
     }
     void flushBuff() {
         if (tmpbuff == []) {
