@@ -3943,7 +3943,9 @@ immutable uint[] jpForceTextLabels = [
     0xC9DBB7,
 ];
 
-static this() {
+immutable string[size_t] jpRenameLabels;
+
+shared static this() {
     jpTable = [
         0x20: " ",
         0x25: "ー",

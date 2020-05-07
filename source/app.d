@@ -107,7 +107,14 @@ void dumpData(ubyte[] source, const DumpInfo info, string outPath, bool usa) {
 }
 
 immutable string[] musicTracks = import("music.txt").split("\n");
+immutable string[] movements = import("movements.txt").split("\n");
+immutable string[] sprites = import("sprites.txt").split("\n");
+immutable string[] items = import("items.txt").split("\n");
+immutable string[] partyMembers = import("party.txt").split("\n");
 immutable string[] eventFlags = import("eventflags.txt").split("\n");
+immutable string[] windows = import("windows.txt").split("\n");
+immutable string[] statusGroups = import("statusgroups.txt").split("\n");
+immutable string[] sfx = import("sfx.txt").split("\n");
 immutable string[] directions = [
     "UP",
     "UP_RIGHT",
@@ -410,7 +417,7 @@ void parseMovement(string baseName, string, ubyte[] source, ulong offset, bool u
                 break;
             case 0x06:
                 auto arg = nextByte();
-                outFile.writefln!"\tEBMOVE_PAUSE $%02X"(arg);
+                outFile.writefln!"\tEBMOVE_PAUSE %d"(arg);
                 break;
             case 0x07:
                 auto arg = nextByte() + (nextByte()<<8);
@@ -730,8 +737,12 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
     outFile.writefln!".INCLUDE \"%s\"\n"(setExtension(baseName.baseName, "symbols.asm"));
     string tmpbuff;
     immutable string[ubyte] table = usa ? usTable : jpTable;
+    immutable string[size_t] renameLabels = usa ? usRenameLabels : jpRenameLabels;
     immutable uint[] forcedLabels = usa ? usForceTextLabels : jpForceTextLabels;
     bool labelPrinted;
+    string label(const ulong addr) {
+        return addr in renameLabels ? renameLabels[addr] : format!"TEXT_BLOCK_%06X"(addr);
+    }
     auto nextByte() {
         labelPrinted = false;
         auto first = source.front;
@@ -750,9 +761,11 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
         if (labelPrinted || source.empty) {
             return;
         }
+        const labelstr = label(offset);
         flushBuff();
-        symbolFile.writefln!".GLOBAL TEXT_BLOCK_%06X: far"(offset);
-        outFile.writefln!"TEXT_BLOCK_%06X: ;$%06X"(offset, offset);
+        symbolFile.writefln!".GLOBAL %s: far"(labelstr);
+        outFile.writeln();
+        outFile.writefln!"%s: ;$%06X"(labelstr, offset);
         labelPrinted = true;
     }
     printLabel();
@@ -776,7 +789,7 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
                 break;
             case 0x02:
                 flushBuff();
-                outFile.writeln("\tEBTEXT_END_BLOCK\n");
+                outFile.writeln("\tEBTEXT_END_BLOCK");
                 printLabel();
                 break;
             case 0x03:
@@ -797,7 +810,7 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
                 flushBuff();
                 auto flag = nextByte() + (nextByte()<<8);
                 auto dest = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                outFile.writefln!"\tEBTEXT_JUMP_IF_FLAG_SET TEXT_BLOCK_%06X, EVENT_FLAG::%s"(dest, eventFlags[flag]);
+                outFile.writefln!"\tEBTEXT_JUMP_IF_FLAG_SET %s, EVENT_FLAG::%s"(label(dest), eventFlags[flag]);
                 break;
             case 0x07:
                 flushBuff();
@@ -807,21 +820,21 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
             case 0x08:
                 flushBuff();
                 auto dest = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                outFile.writefln!"\tEBTEXT_CALL_TEXT TEXT_BLOCK_%06X"(dest);
+                outFile.writefln!"\tEBTEXT_CALL_TEXT %s"(label(dest));
                 break;
             case 0x09:
                 flushBuff();
                 auto argCount = nextByte();
-                uint[] dests;
+                string[] dests;
                 while(argCount--) {
-                    dests ~= nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
+                    dests ~= label(nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24));
                 }
-                outFile.writefln!"\tEBTEXT_JUMP_MULTI %(TEXT_BLOCK_%06X%|, %)"(dests);
+                outFile.writefln!"\tEBTEXT_JUMP_MULTI %-(%s%|, %)"(dests);
                 break;
             case 0x0A:
                 flushBuff();
                 auto dest = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                outFile.writefln!"\tEBTEXT_JUMP TEXT_BLOCK_%06X\n"(dest);
+                outFile.writefln!"\tEBTEXT_JUMP %s\n"(label(dest));
                 break;
             case 0x0B:
                 flushBuff();
@@ -850,7 +863,7 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
             case 0x10:
                 flushBuff();
                 auto time = nextByte();
-                outFile.writefln!"\tEBTEXT_PAUSE $%02X"(time);
+                outFile.writefln!"\tEBTEXT_PAUSE %d"(time);
                 break;
             case 0x11:
                 flushBuff();
@@ -891,7 +904,7 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
                         break;
                     case 0x01:
                         auto arg = nextByte();
-                        outFile.writefln!"\tEBTEXT_OPEN_WINDOW $%02X"(arg);
+                        outFile.writefln!"\tEBTEXT_OPEN_WINDOW WINDOW::%s"(windows[arg]);
                         break;
                     case 0x02:
                         outFile.writeln("\tEBTEXT_UNKNOWN_CC_18_02");
@@ -945,7 +958,7 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
                         auto arg = nextByte();
                         auto statusGroup = nextByte();
                         auto status = nextByte();
-                        outFile.writefln!"\tEBTEXT_INFLICT_STATUS $%02X, $%02X, $%02X"(arg, statusGroup, status);
+                        outFile.writefln!"\tEBTEXT_INFLICT_STATUS PARTY_MEMBER_TEXT::%s, $%02X, $%02X"(partyMembers[arg+1], statusGroup, status);
                         break;
                     case 0x10:
                         auto arg = nextByte();
@@ -1085,11 +1098,11 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
                         break;
                     case 0x02:
                         auto dest = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                        outFile.writefln!"\tEBTEXT_JUMP_IF_FALSE TEXT_BLOCK_%06X"(dest);
+                        outFile.writefln!"\tEBTEXT_JUMP_IF_FALSE %s"(label(dest));
                         break;
                     case 0x03:
                         auto dest = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                        outFile.writefln!"\tEBTEXT_JUMP_IF_TRUE TEXT_BLOCK_%06X"(dest);
+                        outFile.writefln!"\tEBTEXT_JUMP_IF_TRUE %s"(label(dest));
                         break;
                     case 0x04:
                         outFile.writeln("\tEBTEXT_SWAP_WORKING_AND_ARG_MEMORY");
@@ -1130,7 +1143,7 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
                         break;
                     case 0x05:
                         auto arg = nextByte();
-                        outFile.writefln!"\tEBTEXT_PRINT_ITEM_NAME $%02X"(arg);
+                        outFile.writefln!"\tEBTEXT_PRINT_ITEM_NAME ITEM::%s"(items[arg]);
                         break;
                     case 0x06:
                         auto arg = nextByte();
@@ -1201,12 +1214,12 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
                     case 0x00:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        outFile.writefln!"\tEBTEXT_GIVE_ITEM_TO_CHARACTER $%02X, $%02X"(arg, arg2);
+                        outFile.writefln!"\tEBTEXT_GIVE_ITEM_TO_CHARACTER $%02X, ITEM::%s"(arg, items[arg2]);
                         break;
                     case 0x01:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        outFile.writefln!"\tEBTEXT_TAKE_ITEM_FROM_CHARACTER $%02X, $%02X"(arg, arg2);
+                        outFile.writefln!"\tEBTEXT_TAKE_ITEM_FROM_CHARACTER $%02X, ITEM::%s"(arg, items[arg2]);
                         break;
                     case 0x02:
                         auto arg = nextByte();
@@ -1219,12 +1232,12 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
                     case 0x04:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        outFile.writefln!"\tEBTEXT_CHECK_IF_CHARACTER_DOESNT_HAVE_ITEM $%02X, $%02X"(arg, arg2);
+                        outFile.writefln!"\tEBTEXT_CHECK_IF_CHARACTER_DOESNT_HAVE_ITEM $%02X, ITEM::%s"(arg, items[arg2]);
                         break;
                     case 0x05:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        outFile.writefln!"\tEBTEXT_CHECK_IF_CHARACTER_HAS_ITEM $%02X, $%02X"(arg, arg2);
+                        outFile.writefln!"\tEBTEXT_CHECK_IF_CHARACTER_HAS_ITEM $%02X, ITEM::%s"(arg, items[arg2]);
                         break;
                     case 0x06:
                         auto arg = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
@@ -1244,11 +1257,11 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
                         break;
                     case 0x0A:
                         auto arg = nextByte();
-                        outFile.writefln!"\tEBTEXT_GET_BUY_PRICE_OF_ITEM $%02X"(arg);
+                        outFile.writefln!"\tEBTEXT_GET_BUY_PRICE_OF_ITEM ITEM::%s"(items[arg]);
                         break;
                     case 0x0B:
                         auto arg = nextByte();
-                        outFile.writefln!"\tEBTEXT_GET_SELL_PRICE_OF_ITEM $%02X"(arg);
+                        outFile.writefln!"\tEBTEXT_GET_SELL_PRICE_OF_ITEM ITEM::%s"(items[arg]);
                         break;
                     case 0x0C:
                         auto arg = nextByte() + (nextByte()<<8);
@@ -1263,7 +1276,7 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
                     case 0x0E:
                         auto who = nextByte();
                         auto what = nextByte();
-                        outFile.writefln!"\tEBTEXT_GIVE_ITEM_TO_CHARACTER_B $%02X, $%02X"(who, what);
+                        outFile.writefln!"\tEBTEXT_GIVE_ITEM_TO_CHARACTER_B $%02X, ITEM::%s"(who, items[what]);
                         break;
                     case 0x0F:
                         auto arg = nextByte() + (nextByte()<<8);
@@ -1427,7 +1440,7 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
                         break;
                     case 0x02:
                         auto arg = nextByte();
-                        outFile.writefln!"\tEBTEXT_PLAY_SOUND $%02X"(arg);
+                        outFile.writefln!"\tEBTEXT_PLAY_SOUND SFX::%s"(sfx[arg]);
                         break;
                     case 0x03:
                         outFile.writeln("\tEBTEXT_RESTORE_DEFAULT_MUSIC");
@@ -1448,11 +1461,11 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
                         break;
                     case 0x11:
                         auto arg = nextByte();
-                        outFile.writefln!"\tEBTEXT_ADD_PARTY_MEMBER $%02X"(arg);
+                        outFile.writefln!"\tEBTEXT_ADD_PARTY_MEMBER PARTY_MEMBER::%s"(partyMembers[arg]);
                         break;
                     case 0x12:
                         auto arg = nextByte();
-                        outFile.writefln!"\tEBTEXT_REMOVE_PARTY_MEMBER $%02X"(arg);
+                        outFile.writefln!"\tEBTEXT_REMOVE_PARTY_MEMBER PARTY_MEMBER::%s"(partyMembers[arg]);
                         break;
                     case 0x13:
                         auto arg = nextByte();
@@ -1467,7 +1480,7 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
                         auto arg = nextByte() + (nextByte()<<8);
                         auto arg2 = nextByte() + (nextByte()<<8);
                         auto arg3 = nextByte();
-                        outFile.writefln!"\tEBTEXT_GENERATE_ACTIVE_SPRITE $%04X, $%04X, $%02X"(arg, arg2, arg3);
+                        outFile.writefln!"\tEBTEXT_GENERATE_ACTIVE_SPRITE OVERWORLD_SPRITE::%s, EVENT_SCRIPT::%s, $%02X"(sprites[arg], movements[arg2], arg3);
                         break;
                     case 0x16:
                         auto arg = nextByte() + (nextByte()<<8);
@@ -1478,7 +1491,7 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
                         auto arg = nextByte() + (nextByte()<<8);
                         auto arg2 = nextByte() + (nextByte()<<8);
                         auto arg3 = nextByte();
-                        outFile.writefln!"\tEBTEXT_CREATE_ENTITY $%04X, $%04X, $%02X"(arg, arg2, arg3);
+                        outFile.writefln!"\tEBTEXT_CREATE_ENTITY $%04X, EVENT_SCRIPT::%s, $%02X"(arg, movements[arg2], arg3);
                         break;
                     case 0x1A:
                         auto arg = nextByte() + (nextByte()<<8);
@@ -1506,7 +1519,7 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
                     case 0x1F:
                         auto arg = nextByte() + (nextByte()<<8);
                         auto arg2 = nextByte();
-                        outFile.writefln!"\tEBTEXT_DELETE_GENERATED_SPRITE $%04X, $%02X"(arg, arg2);
+                        outFile.writefln!"\tEBTEXT_DELETE_GENERATED_SPRITE OVERWORLD_SPRITE::%s, $%02X"(sprites[arg], arg2);
                         break;
                     case 0x20:
                         auto arg = nextByte();
@@ -1550,7 +1563,7 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
                         break;
                     case 0x63:
                         auto arg = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                        outFile.writefln!"\tEBTEXT_SCREEN_RELOAD_PTR $%06X"(arg);
+                        outFile.writefln!"\tEBTEXT_SCREEN_RELOAD_PTR %s"(label(arg));
                         break;
                     case 0x64:
                         outFile.writeln("\tEBTEXT_DELETE_ALL_NPCS");
@@ -1562,7 +1575,7 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
                         auto arg = nextByte();
                         auto arg2 = nextByte();
                         auto arg3 = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                        outFile.writefln!"\tEBTEXT_ACTIVATE_HOTSPOT $%02X, $%02X, TEXT_BLOCK_%06X"(arg, arg2, arg3);
+                        outFile.writefln!"\tEBTEXT_ACTIVATE_HOTSPOT $%02X, $%02X, %s"(arg, arg2, label(arg3));
                         break;
                     case 0x67:
                         auto arg = nextByte();
@@ -1599,15 +1612,15 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
                     case 0xC0:
                         flushBuff();
                         auto argCount = nextByte();
-                        uint[] dests;
+                        string[] dests;
                         while(argCount--) {
-                            dests ~= nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
+                            dests ~= label(nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24));
                         }
-                        outFile.writefln!"\tEBTEXT_JUMP_MULTI2 %(TEXT_BLOCK_%06X%|, %)"(dests);
+                        outFile.writefln!"\tEBTEXT_JUMP_MULTI2 %-(%s%|, %)"(dests);
                         break;
                     case 0xD0:
                         auto arg = nextByte();
-                        outFile.writefln!"\tEBTEXT_TRY_FIX_ITEM $%02X"(arg);
+                        outFile.writefln!"\tEBTEXT_TRY_FIX_ITEM ITEM::%s"(items[arg]);
                         break;
                     case 0xD1:
                         outFile.writeln("\tEBTEXT_GET_DIRECTION_OF_NEARBY_TRUFFLE");
@@ -1681,12 +1694,12 @@ void parseTextData(string baseName, string, ubyte[] source, ulong offset, bool u
                     case 0xF1:
                         auto arg = nextByte() + (nextByte()<<8);
                         auto arg2 = nextByte() + (nextByte()<<8);
-                        outFile.writefln!"\tEBTEXT_SET_TPT_MOVEMENT_CODE $%04X, $%04X"(arg, arg2);
+                        outFile.writefln!"\tEBTEXT_SET_TPT_MOVEMENT_CODE $%04X, EVENT_SCRIPT::%s"(arg, movements[arg2]);
                         break;
                     case 0xF2:
                         auto arg = nextByte() + (nextByte()<<8);
                         auto arg2 = nextByte() + (nextByte()<<8);
-                        outFile.writefln!"\tEBTEXT_SET_SPRITE_MOVEMENT_CODE $%04X, $%04X"(arg, arg2);
+                        outFile.writefln!"\tEBTEXT_SET_SPRITE_MOVEMENT_CODE OVERWORLD_SPRITE::%s, EVENT_SCRIPT::%s"(sprites[arg], movements[arg2]);
                         break;
                     case 0xF3:
                         auto arg = nextByte() + (nextByte()<<8);
