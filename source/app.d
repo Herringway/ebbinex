@@ -227,6 +227,25 @@ immutable string[] distortionStyles = [
     "VERTICAL_SMOOTH",
     "UNKNOWN"
 ];
+string[] parseCompressedText(string dir, string baseName, string extension, ubyte[] source, ulong offset, Build build) {
+    import std.algorithm.searching : canFind;
+    import std.array : empty, front, popFront;
+    auto filename = setExtension(baseName, extension);
+    auto outFile = File(buildPath(dir, filename), "w");
+    immutable string[ubyte] table = getTextTable(build);
+    size_t id;
+    //outFile.writef!"COMPRESSED_TEXT_DATA:\nCOMPRESSED_TEXT_CHUNK_%d:\n\tEBTEXTZ \""(id);
+    foreach (c; source) {
+        if (c == 0x00) {
+            //outFile.writef!"\"\nCOMPRESSED_TEXT_CHUNK_%d:\n\tEBTEXTZ \""(++id);
+            outFile.writeln();
+            continue;
+        }
+        outFile.write(table.get(c, "ERROR!!!"));
+    }
+    outFile.writeln();
+    return [filename];
+}
 string[] parseDistortion(string dir, string baseName, string ext, ubyte[] source, ulong offset, Build build) {
     auto filename = setExtension(baseName, ext);
     auto outFile = File(buildPath(dir, filename), "w");
