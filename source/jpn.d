@@ -4178,4 +4178,8 @@ shared static this() {
         0xFE: "ョ",
         0xFF: "ロ",
     ];
+    jpnData.renameLabels = [
+        0xC7C43F: "TEXT_DEBUG_APPLE_MENU",
+        0xC7D36D: "TEXT_DEBUG_BANANA_MENU",
+    ];
 }
