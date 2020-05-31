@@ -114,7 +114,12 @@ void dumpData(ubyte[] source, const DumpInfo info, string outPath, Build build) 
             files = writeFile!parseStaffText(temporary, info.name, info.extension, data, offset, build);
             break;
         default:
-            files = writeFile!writeRaw(temporary, info.name, info.extension, data, offset, build);
+            if (info.compressed) {
+                files ~= writeFile!writeRaw(temporary, info.name, info.extension ~ ".lzhal", data, offset, build);
+                files ~= writeFile!writeCompressed(temporary, info.name, info.extension, data, offset, build);
+            } else {
+                files = writeFile!writeRaw(temporary, info.name, info.extension, data, offset, build);
+            }
             break;
     }
     foreach (file; files) {
@@ -146,6 +151,13 @@ string[] writeRaw(string dir, string baseName, string extension, ubyte[] source,
 	File(buildPath(dir, filename), "w").rawWrite(source);
     return [filename];
 }
+string[] writeCompressed(string dir, string baseName, string extension, ubyte[] source, ulong offset, Build build) {
+    import compy : decomp, Format;
+    auto filename = setExtension(baseName, extension);
+    File(buildPath(dir, filename), "w").rawWrite(decomp(Format.HALLZ2, source));
+    return [filename];
+}
+
 string[] parseNPCConfig(string dir, string baseName, string extension, ubyte[] source, ulong offset, Build build) {
     import std.range:  chunks;
     auto filename = setExtension(baseName, extension);

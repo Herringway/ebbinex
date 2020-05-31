@@ -6,4 +6,5 @@ struct DumpInfo {
 	ulong offset;
 	ulong size;
 	string extension = "bin";
+	bool compressed;
 }
