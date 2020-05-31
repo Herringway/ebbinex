@@ -16,3 +16,4 @@ ebbinex-test-*
 *.bak
 *.lst
 bin
+dub.selections.json
