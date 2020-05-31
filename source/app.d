@@ -781,7 +781,7 @@ string[] parseStaffText(string dir, string baseName, string extension, ubyte[] s
                     if (arg !in table) {
                         writeln(arg);
                     }
-                    tmpbuff ~= table[arg];
+                    tmpbuff ~= table.get(arg, format!"[%02X]"(arg));
                     arg = nextByte();
                 }
                 outFile.writefln!"\tEBSTAFF_SMALLTEXT \"%s\""(tmpbuff);
@@ -793,7 +793,7 @@ string[] parseStaffText(string dir, string baseName, string extension, ubyte[] s
                     if (arg !in table) {
                         writeln(arg);
                     }
-                    tmpbuff ~= table[arg];
+                    tmpbuff ~= table.get(arg, format!"[%02X]"(arg));
                     arg = nextByte();
                 }
                 outFile.writefln!"\tEBSTAFF_BIGTEXT \"%s\""(tmpbuff);
