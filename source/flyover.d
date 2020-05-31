@@ -7,10 +7,12 @@ import std.range;
 
 import common;
 
-void parseFlyover(string baseName, string, ubyte[] source, ulong offset, Build build) {
+string[] parseFlyover(string dir, string baseName, string extension, ubyte[] source, ulong offset, Build build) {
     import std.array : empty, front, popFront;
-    auto outFile = File(setExtension(baseName, "flyover"), "w");
-    auto symbolFile = File(setExtension(baseName, "symbols.asm"), "w");
+    auto filename = setExtension(baseName, extension);
+    auto symbolFilename = setExtension(baseName, "symbols.asm");
+    auto outFile = File(buildPath(dir, filename), "w");
+    auto symbolFile = File(buildPath(dir, symbolFilename), "w");
     outFile.writefln!".INCLUDE \"%s\"\n"(setExtension(baseName.baseName, "symbols.asm"));
     string tmpbuff;
     immutable string[ubyte] table = getTextTable(build);
@@ -69,4 +71,5 @@ void parseFlyover(string baseName, string, ubyte[] source, ulong offset, Build b
                 break;
         }
     }
+    return [filename, symbolFilename];
 }

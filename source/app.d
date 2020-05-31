@@ -68,6 +68,7 @@ auto detect(const ubyte[] data) @safe pure {
 
 void dumpData(ubyte[] source, const DumpInfo info, string outPath, Build build) {
     import std.conv : text;
+    import std.exception : enforce;
     assert(source.length == 0x300000, "ROM size too small: Got "~source.length.text);
     assert(info.offset <= 0x300000, "Starting offset too high while attempting to write "~info.subdir~"/"~info.name);
     assert(info.offset+info.size <= 0x300000, "Size too high while attempting to write "~info.subdir~"/"~info.name);
@@ -79,50 +80,76 @@ void dumpData(ubyte[] source, const DumpInfo info, string outPath, Build build) 
     auto offset = info.offset+0xC00000;
     auto path = buildPath(outDir, info.name);
 
+    string temporary = buildPath(tempDir, "ebbinex");
+    enforce(!temporary.exists, "Temp folder already exists?");
+    mkdir(temporary);
+
+    string[] files;
     switch (info.extension) {
         case "ebtxt":
-            writeFile!parseTextData(path, info.extension, data, offset, build);
+            files = writeFile!parseTextData(temporary, info.name, info.extension, data, offset, build);
             break;
         case "npcconfig":
-            writeFile!parseNPCConfig(path, info.extension, data, offset, build);
+            files = writeFile!parseNPCConfig(temporary, info.name, info.extension, data, offset, build);
             break;
         case "flyover":
-            writeFile!parseFlyover(path, info.extension, data, offset, build);
+            files = writeFile!parseFlyover(temporary, info.name, info.extension, data, offset, build);
             break;
         case "enemyconfig":
-            writeFile!parseEnemyConfig(path, info.extension, data, offset, build);
+            files = writeFile!parseEnemyConfig(temporary, info.name, info.extension, data, offset, build);
             break;
         case "itemconfig":
-            writeFile!parseItemConfig(path, info.extension, data, offset, build);
+            files = writeFile!parseItemConfig(temporary, info.name, info.extension, data, offset, build);
             break;
         case "distortion":
-            writeFile!parseDistortion(path, info.extension, data, offset, build);
+            files = writeFile!parseDistortion(temporary, info.name, info.extension, data, offset, build);
             break;
         case "movement":
-            writeFile!parseMovement(path, info.extension, data, offset, build);
+            files = writeFile!parseMovement(temporary, info.name, info.extension, data, offset, build);
+            break;
+        case "ebctxt":
+            files = writeFile!parseCompressedText(temporary, info.name, info.extension, data, offset, build);
             break;
         case "stafftext":
-            writeFile!parseStaffText(path, info.extension, data, offset, build);
+            files = writeFile!parseStaffText(temporary, info.name, info.extension, data, offset, build);
             break;
         default:
-            writeFile!writeRaw(path, info.extension, data, offset, build);
+            files = writeFile!writeRaw(temporary, info.name, info.extension, data, offset, build);
             break;
     }
+    foreach (file; files) {
+        auto target = buildPath(outDir, file);
+        auto tempFile = buildPath(temporary, file);
+        if (target.exists && !sameFile(tempFile, target)) {
+            target.remove();
+        }
+        if (!target.exists) {
+            mkdirRecurse(outDir);
+            copy(tempFile, target);
+            writeln("Dumped ", target);
+        } else {
+            //writeln("Skipping ", target);
+        }
+    }
+    rmdirRecurse(temporary);
 }
 
-
-void writeFile(alias func)(string baseName, string extension, ubyte[] source, ulong offset, Build build) {
-    writefln!"Dumping %s.%s"(baseName, extension);
-    func(baseName, extension, source, offset, build);
-}
-void writeRaw(string baseName, string extension, ubyte[] source, ulong offset, Build build) {
-	auto outFile = File(setExtension(baseName, extension), "w");
-	outFile.rawWrite(source);
+bool sameFile(string file1, string file2) {
+    return read(file1) == read(file2);
 }
 
-void parseNPCConfig(string baseName, string, ubyte[] source, ulong offset, Build build) {
+string[] writeFile(alias func)(string dir, string filename, string extension, ubyte[] source, ulong offset, Build build) {
+    return func(dir, filename, extension, source, offset, build);
+}
+string[] writeRaw(string dir, string baseName, string extension, ubyte[] source, ulong offset, Build build) {
+    auto filename = setExtension(baseName, extension);
+	File(buildPath(dir, filename), "w").rawWrite(source);
+    return [filename];
+}
+string[] parseNPCConfig(string dir, string baseName, string extension, ubyte[] source, ulong offset, Build build) {
     import std.range:  chunks;
-    auto outFile = File(setExtension(baseName, "npcconfig"), "w");
+    auto filename = setExtension(baseName, extension);
+    auto outFile = File(buildPath(dir, filename), "w");
     void printPointer(ubyte[] data) {
         auto ptr = data[0] + (data[1]<<8) + (data[2]<<16);
         if (ptr == 0) {
@@ -162,6 +189,7 @@ void parseNPCConfig(string baseName, string, ubyte[] source, ulong offset, Build
         }
         outFile.writeln();
     }
+    return [filename];
 }
 auto decodeText(const ubyte[] data, const string[ubyte] table) {
     struct Result {
@@ -187,8 +215,9 @@ immutable string[] distortionStyles = [
     "VERTICAL_SMOOTH",
     "UNKNOWN"
 ];
-void parseDistortion(string baseName, string ext, ubyte[] source, ulong offset, Build build) {
-    auto outFile = File(setExtension(baseName, ext), "w");
+string[] parseDistortion(string dir, string baseName, string ext, ubyte[] source, ulong offset, Build build) {
+    auto filename = setExtension(baseName, ext);
+    auto outFile = File(buildPath(dir, filename), "w");
     foreach (entry; source.chunks(17)) {
         size_t index;
         ubyte nextByte() {
@@ -218,10 +247,12 @@ void parseDistortion(string baseName, string ext, ubyte[] source, ulong offset, 
         outFile.writefln!"  .BYTE $%02X ;Unknown"(nextByte());
         outFile.writeln();
     }
+    return [filename];
 }
-void parseEnemyConfig(string baseName, string, ubyte[] source, ulong offset, Build build) {
+string[] parseEnemyConfig(string dir, string baseName, string extension, ubyte[] source, ulong offset, Build build) {
     import std.range:  chunks;
-    auto outFile = File(setExtension(baseName, "enemyconfig"), "w");
+    auto filename = setExtension(baseName, extension);
+    auto outFile = File(buildPath(dir, filename), "w");
     immutable string[ubyte] table = getTextTable(build);
     void printPointer(uint ptr) {
         //auto ptr = data[0] + (data[1]<<8) + (data[2]<<16);
@@ -297,12 +328,14 @@ void parseEnemyConfig(string baseName, string, ubyte[] source, ulong offset, Bui
         outFile.writefln!"  .BYTE $%02X ;Mirror success rate"(nextByte());
         outFile.writeln();
     }
+    return [filename];
 }
-void parseItemConfig(string baseName, string, ubyte[] source, ulong offset, Build build) {
+string[] parseItemConfig(string dir, string baseName, string extension, ubyte[] source, ulong offset, Build build) {
     import std.algorithm : map;
     import std.bitmanip : bitsSet;
     import std.range:  chunks;
-    auto outFile = File(setExtension(baseName, "itemconfig"), "w");
+    auto filename = setExtension(baseName, extension);
+    auto outFile = File(buildPath(dir, filename), "w");
     immutable string[ubyte] table = getTextTable(build);
     void printPointer(uint ptr) {
         if (ptr == 0) {
@@ -343,11 +376,13 @@ void parseItemConfig(string baseName, string, ubyte[] source, ulong offset, Buil
         printPointer(nextInt());
         outFile.writeln();
     }
+    return [filename];
 }
 
-void parseMovement(string baseName, string, ubyte[] source, ulong offset, Build build) {
+string[] parseMovement(string dir, string baseName, string extension, ubyte[] source, ulong offset, Build build) {
     import std.array : empty, front, popFront;
-    auto outFile = File(setExtension(baseName, "movement"), "w");
+    auto filename = setExtension(baseName, extension);
+    auto outFile = File(buildPath(dir, filename), "w");
     auto nextByte() {
         auto first = source.front;
         source.popFront();
@@ -690,12 +725,14 @@ void parseMovement(string baseName, string, ubyte[] source, ulong offset, Build 
                 break;
         }
     }
+    return [filename];
 }
 
 
-void parseStaffText(string baseName, string, ubyte[] source, ulong offset, Build build) {
+string[] parseStaffText(string dir, string baseName, string extension, ubyte[] source, ulong offset, Build build) {
     import std.array : empty, front, popFront;
-    auto outFile = File(setExtension(baseName, "stafftext"), "w");
+    auto filename = setExtension(baseName, extension);
+    auto outFile = File(buildPath(dir, filename), "w");
     immutable string[ubyte] table = getStaffTextTable(build);
     auto nextByte() {
         auto first = source.front;
@@ -745,4 +782,5 @@ void parseStaffText(string baseName, string, ubyte[] source, ulong offset, Build
                 break;
         }
     }
+    return [filename];
 }
