@@ -8,13 +8,86 @@ import common;
 
 version = compressedOutput;
 
-void parseTextData(string baseName, string, ubyte[] source, ulong offset, Build build) {
+immutable string[][] ailments = [
+    [
+        "UNCONSCIOUS",
+        "DIAMONDIZED",
+        "PARALYZED",
+        "NAUSEOUS",
+        "POISONED",
+        "SUNSTROKE",
+        "COLD"
+    ],
+    [
+        "MUSHROOMIZED",
+        "POSSESSED"
+    ],
+    [
+        "ASLEEP",
+        "CRYING",
+        "IMMOBILIZED",
+        "SOLIDIFIED"
+    ],
+    [
+        "STRANGE"
+    ],
+    [
+        "CANT_CONCENTRATE",
+        "CANT_CONCENTRATE2",
+        "CANT_CONCENTRATE3",
+        "CANT_CONCENTRATE4",
+    ],
+    [
+        "HOMESICK"
+    ],
+    [
+        "PSI_SHIELD_POWER",
+        "PSI_SHIELD",
+        "SHIELD_POWER",
+        "SHIELD"
+    ]
+];
+
+immutable string[] statusGroups = [
+    "PERSISTENT_EASYHEAL",
+    "PERSISTENT_HARDHEAL",
+    "TEMPORARY",
+    "STRANGENESS",
+    "CONCENTRATION",
+    "HOMESICKNESS",
+    "SHIELD",
+];
+
+
+string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulong offset, Build build) {
     import std.algorithm.searching : canFind;
     import std.array : empty, front, popFront;
-    auto outFile = File(setExtension(baseName, "ebtxt"), "w");
-    auto symbolFile = File(setExtension(baseName, "symbols.asm"), "w");
-    outFile.writefln!".INCLUDE \"%s\"\n"(setExtension(baseName.baseName, "symbols.asm"));
+    const jpText = build == Build.jpn;
+    auto filename = setExtension(baseName, "ebtxt");
+    auto uncompressedFilename = setExtension(baseName, "ebtxt.uncompressed");
+    auto symbolFilename = setExtension(baseName, "symbols.asm");
+    auto outFile = File(buildPath(dir, filename), "w");
+    File outFileC;
+    if (!jpText) {
+        outFileC = File(buildPath(dir, uncompressedFilename), "w");
+     }
+    auto symbolFile = File(buildPath(dir, symbolFilename), "w");
+    void writeFormatted(string fmt, T...)(T args) {
+        outFile.writefln!fmt(args);
+        if (!jpText) {
+            outFileC.writefln!fmt(args);
+        }
+    }
+    void writeLine(T...)(T args) {
+        outFile.writeln(args);
+        if (!jpText) {
+            outFileC.writeln(args);
+        }
+    }
+    writeFormatted!".INCLUDE \"%s\"\n"(setExtension(baseName.baseName, "symbols.asm"));
+    ubyte[] raw;
     string tmpbuff;
+    string tmpCompbuff;
     immutable string[ubyte] table = getTextTable(build);
     immutable string[size_t] renameLabels = getRenameLabels(build);
     immutable uint[] forcedLabels = getForcedTextLabels(build);
