@@ -8,22 +8,6 @@ import common;
 import dumpinfo;
 import flyover;
 import textdump;
-bool isHeaderedEBROM(const ubyte[] data) pure @safe {
-	return ((data[0x101DC]^data[0x101DE]) == 0xFF) && ((data[0x101DD]^data[0x101DF]) == 0xFF) && //Header checksum
-		(data[0x101C0..0x101D5] == "EARTH BOUND          ");
-}
-bool isUnHeaderedEBROM(const ubyte[] data) pure @safe {
-	return ((data[0xFFDC]^data[0xFFDE]) == 0xFF) && ((data[0xFFDD]^data[0xFFDF]) == 0xFF) && //Header checksum
-		(data[0xFFC0..0xFFD5] == "EARTH BOUND          ");
-}
-bool isHeaderedMO2ROM(const ubyte[] data) pure @safe {
-	return ((data[0x101DC]^data[0x101DE]) == 0xFF) && ((data[0x101DD]^data[0x101DF]) == 0xFF) && //Header checksum
-		(data[0x101C0..0x101D5] == "MOTHER-2             ");
-}
-bool isUnHeaderedMO2ROM(const ubyte[] data) pure @safe {
-	return ((data[0xFFDC]^data[0xFFDE]) == 0xFF) && ((data[0xFFDD]^data[0xFFDF]) == 0xFF) && //Header checksum
-		(data[0xFFC0..0xFFD5] == "MOTHER-2             ");
-}
 void main(string[] args) {
 	if (args.length < 2) {
 		writefln!"Usage: %s <path to rom> [output dir]"(args[0]);
