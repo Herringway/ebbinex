@@ -32,6 +32,9 @@ void main(string[] args) {
         case Build.usa:
             write("Detected Earthbound (USA)");
             break;
+        case Build.usa19950327:
+            write("Detected Earthbound (1995-03-27 prototype)");
+            break;
         case Build.unknown:
             stderr.writeln("Unrecognized ROM.");
             return;
@@ -57,6 +60,7 @@ auto detect(const ubyte[] data) @safe pure {
         const checksumComplement = (cast(const ushort[])data[base + 44 .. base + 46])[0];
         if ((checksum ^ checksumComplement) == 0xFFFF) {
             switch (cast(const(char[]))data[base + 16 .. base + 37]) {
+                case "01 95.03.27          ": return Result(headered, Build.usa19950327);
                 case "EARTH BOUND          ": return Result(headered, Build.usa);
                 case "MOTHER-2             ": return Result(headered, Build.jpn);
                 default: break;
