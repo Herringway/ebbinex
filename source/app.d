@@ -763,7 +763,6 @@ string[] parseMovement(string dir, string baseName, string extension, ubyte[] so
     return [filename];
 }
 
-
 string[] parseStaffText(string dir, string baseName, string extension, ubyte[] source, ulong offset, Build build) {
     import std.array : empty, front, popFront;
     auto filename = setExtension(baseName, extension);
