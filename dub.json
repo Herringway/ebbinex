@@ -6,8 +6,8 @@
 	"description": "A minimal D application.",
 	"copyright": "Copyright © 2018, Cameron",
 	"license": "proprietary",
-	"stringImportPaths": ["constants"],
 	"dependencies": {
-		"d-comp": "*"
+		"d-comp": "*",
+		"siryul": "~>0.6"
 	}
 }

@@ -4,73 +4,71 @@ import std.stdio;
 import std.string;
 import std.range;
 
+import std.getopt;
+
 import common;
-import dumpinfo;
 import flyover;
 import textdump;
-void main(string[] args) {
-	if (args.length < 2) {
-		writefln!"Usage: %s <path to rom> [output dir]"(args[0]);
-		return;
+import siryul;
+
+int main(string[] args) {
+    string dumpPathOverride = "";
+    bool decomp;
+    string commonDataPath = "commondefs.yml";
+    auto helpInfo = getopt(args,
+        "decompress|z", "Decompress compressed data", &decomp,
+        "commondata|c", "Path to common data definitions", &commonDataPath,
+        "dumpPath|d", "Override defined dump path", &dumpPathOverride,
+    );
+	if ((args.length < 3) || helpInfo.helpWanted) {
+		defaultGetoptPrinter(format!"Usage: %s <path to dump doc> <path to rom>"(args[0]), helpInfo.options);
+		return 1;
 	}
-    string outPath;
-    if (args.length == 3) {
-        outPath = args[2];
-    } else {
-        outPath = "bin";
-    }
-	auto rom = cast(ubyte[])read(args[1], 0x300200);
+    const commonData = fromFile!(CommonData, YAML)(commonDataPath);
+
+    const docFile = fromFile!(DumpDoc, YAML)(args[1]);
+
+	auto rom = readFile(args[2]);
 	if (rom.length < 0x300000) {
 		stderr.writeln("File too small to be an Earthbound ROM.");
-		return;
+		return 2;
 	}
-    const detected = rom.detect();
-    final switch (detected.build) {
-        case Build.jpn:
-            write("Detected Mother 2 (JP)");
-            break;
-        case Build.usa:
-            write("Detected Earthbound (USA)");
-            break;
-        case Build.usa19950327:
-            write("Detected Earthbound (1995-03-27 prototype)");
-            break;
-        case Build.unknown:
-            stderr.writeln("Unrecognized ROM.");
-            return;
+    const detected = rom.detect(docFile.romIdentifier);
+    if (!detected.matched) {
+        stderr.writeln("Non-matching ROM detected.");
+        return 3;
     }
+    write("Correct ROM detected");
     if (detected.header) {
         rom = rom[0x200 .. $];
         write(" (with 512 byte header)");
     }
     writeln();
-	foreach (entry; getDumpEntries(detected.build)) {
-        dumpData(rom, entry, outPath, detected.build);
+	foreach (entry; docFile.dumpEntries) {
+        dumpData(docFile, commonData, rom, entry, (dumpPathOverride != "") ? dumpPathOverride : docFile.defaultDumpPath, decomp);
     }
+    return 0;
 }
 
 
-auto detect(const ubyte[] data) @safe pure {
+auto detect(const ubyte[] data, string identifier) @safe pure {
     struct Result {
         bool header;
-        Build build;
+        bool matched;
     }
     foreach (headered, base; zip(only(false, true), only(0xFFB0, 0x101B0))) {
         const checksum = (cast(const ushort[])data[base + 46 .. base + 48])[0];
         const checksumComplement = (cast(const ushort[])data[base + 44 .. base + 46])[0];
         if ((checksum ^ checksumComplement) == 0xFFFF) {
-            switch (cast(const(char[]))data[base + 16 .. base + 37]) {
-                case "01 95.03.27          ": return Result(headered, Build.usa19950327);
-                case "EARTH BOUND          ": return Result(headered, Build.usa);
-                case "MOTHER-2             ": return Result(headered, Build.jpn);
-                default: break;
+            if (cast(const(char[]))data[base + 16 .. base + 37] == identifier) {
+                return Result(headered, true);
             }
         }
     }
-    return Result(false, Build.unknown);
+    return Result(false, false);
 }
 
-void dumpData(ubyte[] source, const DumpInfo info, string outPath, Build build) {
+void dumpData(const DumpDoc doc, const CommonData commonData, ubyte[] source, const DumpInfo info, string outPath, bool decompress) {
     import std.conv : text;
     import std.exception : enforce;
     assert(source.length == 0x300000, "ROM size too small: Got "~source.length.text);
@@ -91,38 +89,40 @@ void dumpData(ubyte[] source, const DumpInfo info, string outPath, Build build) 
     string[] files;
     switch (info.extension) {
         case "ebtxt":
-            files = writeFile!parseTextData(temporary, info.name, info.extension, data, offset, build);
+            files = writeFile!parseTextData(temporary, info.name, info.extension, data, offset, doc, commonData);
             break;
         case "npcconfig":
-            files = writeFile!parseNPCConfig(temporary, info.name, info.extension, data, offset, build);
+            files = writeFile!parseNPCConfig(temporary, info.name, info.extension, data, offset, doc, commonData);
             break;
         case "flyover":
-            files = writeFile!parseFlyover(temporary, info.name, info.extension, data, offset, build);
+            files = writeFile!parseFlyover(temporary, info.name, info.extension, data, offset, doc, commonData);
             break;
         case "enemyconfig":
-            files = writeFile!parseEnemyConfig(temporary, info.name, info.extension, data, offset, build);
+            files = writeFile!parseEnemyConfig(temporary, info.name, info.extension, data, offset, doc, commonData);
             break;
         case "itemconfig":
-            files = writeFile!parseItemConfig(temporary, info.name, info.extension, data, offset, build);
+            files = writeFile!parseItemConfig(temporary, info.name, info.extension, data, offset, doc, commonData);
             break;
         case "distortion":
-            files = writeFile!parseDistortion(temporary, info.name, info.extension, data, offset, build);
+            files = writeFile!parseDistortion(temporary, info.name, info.extension, data, offset, doc, commonData);
             break;
         case "movement":
-            files = writeFile!parseMovement(temporary, info.name, info.extension, data, offset, build);
+            files = writeFile!parseMovement(temporary, info.name, info.extension, data, offset, doc, commonData);
             break;
         case "ebctxt":
-            files = writeFile!parseCompressedText(temporary, info.name, info.extension, data, offset, build);
+            files = writeFile!parseCompressedText(temporary, info.name, info.extension, data, offset, doc, commonData);
             break;
         case "stafftext":
-            files = writeFile!parseStaffText(temporary, info.name, info.extension, data, offset, build);
+            files = writeFile!parseStaffText(temporary, info.name, info.extension, data, offset, doc, commonData);
             break;
         default:
             if (info.compressed) {
-                files ~= writeFile!writeRaw(temporary, info.name, info.extension ~ ".lzhal", data, offset, build);
-                files ~= writeFile!writeCompressed(temporary, info.name, info.extension, data, offset, build);
+                files ~= writeFile!writeRaw(temporary, info.name, info.extension ~ ".lzhal", data, offset, doc, commonData);
+                if (decompress) {
+                    files ~= writeFile!writeCompressed(temporary, info.name, info.extension, data, offset, doc, commonData);
+                }
             } else {
-                files = writeFile!writeRaw(temporary, info.name, info.extension, data, offset, build);
+                files = writeFile!writeRaw(temporary, info.name, info.extension, data, offset, doc, commonData);
             }
             break;
     }
@@ -144,25 +144,25 @@ void dumpData(ubyte[] source, const DumpInfo info, string outPath, Build build) 
 }
 
 bool sameFile(string file1, string file2) {
-    return read(file1) == read(file2);
+    return readFile(file1) == readFile(file2);
 }
 
-string[] writeFile(alias func)(string dir, string filename, string extension, ubyte[] source, ulong offset, Build build) {
-    return func(dir, filename, extension, source, offset, build);
+string[] writeFile(alias func)(string dir, string filename, string extension, ubyte[] source, ulong offset, const DumpDoc doc, const CommonData commonData) {
+    return func(dir, filename, extension, source, offset, doc, commonData);
 }
-string[] writeRaw(string dir, string baseName, string extension, ubyte[] source, ulong offset, Build build) {
+string[] writeRaw(string dir, string baseName, string extension, ubyte[] source, ulong offset, const DumpDoc, const CommonData commonData) {
     auto filename = setExtension(baseName, extension);
 	File(buildPath(dir, filename), "w").rawWrite(source);
     return [filename];
 }
-string[] writeCompressed(string dir, string baseName, string extension, ubyte[] source, ulong offset, Build build) {
+string[] writeCompressed(string dir, string baseName, string extension, ubyte[] source, ulong offset, const DumpDoc, const CommonData commonData) {
     import compy : decomp, Format;
     auto filename = setExtension(baseName, extension);
     File(buildPath(dir, filename), "w").rawWrite(decomp(Format.HALLZ2, source));
     return [filename];
 }
 
-string[] parseNPCConfig(string dir, string baseName, string extension, ubyte[] source, ulong offset, Build build) {
+string[] parseNPCConfig(string dir, string baseName, string extension, ubyte[] source, ulong offset, const DumpDoc, const CommonData commonData) {
     import std.range:  chunks;
     auto filename = setExtension(baseName, extension);
     auto outFile = File(buildPath(dir, filename), "w");
@@ -192,10 +192,10 @@ string[] parseNPCConfig(string dir, string baseName, string extension, ubyte[] s
         }
         outFile.writefln!"  .BYTE NPC_TYPE::%s"(npcType);
         outFile.writefln!"  .WORD $%04X"(entry[1] + (entry[2]<<8));
-        outFile.writefln!"  .BYTE DIRECTION::%s"(directions[entry[3]]);
+        outFile.writefln!"  .BYTE DIRECTION::%s"(commonData.directions[entry[3]]);
         outFile.writefln!"  .BYTE $%02X"(entry[4]);
         outFile.writefln!"  .BYTE $%02X"(entry[5]);
-        outFile.writefln!"  .WORD EVENT_FLAG::%s"(eventFlags[entry[6] + (entry[7]<<8)]);
+        outFile.writefln!"  .WORD EVENT_FLAG::%s"(commonData.eventFlags[entry[6] + (entry[7]<<8)]);
         outFile.writefln!"  .BYTE $%02X"(entry[8]);
         printPointer(entry[9..13]);
         if (secondaryPointer) {
@@ -231,12 +231,11 @@ immutable string[] distortionStyles = [
     "VERTICAL_SMOOTH",
     "UNKNOWN"
 ];
-string[] parseCompressedText(string dir, string baseName, string extension, ubyte[] source, ulong offset, Build build) {
+string[] parseCompressedText(string dir, string baseName, string extension, ubyte[] source, ulong offset, const DumpDoc doc, const CommonData commonData) {
     import std.algorithm.searching : canFind;
     import std.array : empty, front, popFront;
     auto filename = setExtension(baseName, extension);
     auto outFile = File(buildPath(dir, filename), "w");
-    immutable string[ubyte] table = getTextTable(build);
     size_t id;
     //outFile.writef!"COMPRESSED_TEXT_DATA:\nCOMPRESSED_TEXT_CHUNK_%d:\n\tEBTEXTZ \""(id);
     foreach (c; source) {
@@ -245,12 +244,12 @@ string[] parseCompressedText(string dir, string baseName, string extension, ubyt
             outFile.writeln();
             continue;
         }
-        outFile.write(table.get(c, "ERROR!!!"));
+        outFile.write(doc.textTable.get(c, "ERROR!!!"));
     }
     outFile.writeln();
     return [filename];
 }
-string[] parseDistortion(string dir, string baseName, string ext, ubyte[] source, ulong offset, Build build) {
+string[] parseDistortion(string dir, string baseName, string ext, ubyte[] source, ulong offset, const DumpDoc doc, const CommonData commonData) {
     auto filename = setExtension(baseName, ext);
     auto outFile = File(buildPath(dir, filename), "w");
     foreach (entry; source.chunks(17)) {
@@ -284,11 +283,10 @@ string[] parseDistortion(string dir, string baseName, string ext, ubyte[] source
     }
     return [filename];
 }
-string[] parseEnemyConfig(string dir, string baseName, string extension, ubyte[] source, ulong offset, Build build) {
+string[] parseEnemyConfig(string dir, string baseName, string extension, ubyte[] source, ulong offset, const DumpDoc doc, const CommonData commonData) {
     import std.range:  chunks;
     auto filename = setExtension(baseName, extension);
     auto outFile = File(buildPath(dir, filename), "w");
-    immutable string[ubyte] table = getTextTable(build);
     void printPointer(uint ptr) {
         //auto ptr = data[0] + (data[1]<<8) + (data[2]<<16);
         if (ptr == 0) {
@@ -312,10 +310,10 @@ string[] parseEnemyConfig(string dir, string baseName, string extension, ubyte[]
             return entry[index] + (entry[index+1]<<8) + (entry[index+2]<<16) + (entry[index+3]<<24);
         }
         outFile.writefln!"  .BYTE $%02X ;The Flag"(nextByte());
-        outFile.writefln!"  PADDEDEBTEXT \"%s\", 25"(decodeText(entry[1..25], table));
+        outFile.writefln!"  PADDEDEBTEXT \"%s\", 25"(decodeText(entry[1..25], doc.textTable));
         index = 26;
-        outFile.writefln!"  .BYTE GENDER::%s"(genders[nextByte()]);
-        outFile.writefln!"  .BYTE ENEMYTYPE::%s"(enemyTypes[nextByte()]);
+        outFile.writefln!"  .BYTE GENDER::%s"(commonData.genders[nextByte()]);
+        outFile.writefln!"  .BYTE ENEMYTYPE::%s"(commonData.enemyTypes[nextByte()]);
         outFile.writefln!"  .WORD $%04X ;Battle sprite"(nextShort());
         outFile.writefln!"  .WORD $%04X ;Out-of-battle sprite"(nextShort());
         outFile.writefln!"  .BYTE $%02X ;Run flag"(nextByte());
@@ -329,7 +327,7 @@ string[] parseEnemyConfig(string dir, string baseName, string extension, ubyte[]
         //index = 53;
         outFile.writefln!"  .BYTE $%02X ;Palette"(nextByte());
         outFile.writefln!"  .BYTE %s ;Level"(nextByte());
-        outFile.writefln!"  .BYTE MUSIC::%s"(musicTracks[nextByte()]);
+        outFile.writefln!"  .BYTE MUSIC::%s"(commonData.musicTracks[nextByte()]);
         outFile.writefln!"  .WORD %s ;Offense"(nextShort());
         outFile.writefln!"  .WORD %s ;Defense"(nextShort());
         outFile.writefln!"  .BYTE %s ;Speed"(nextByte());
@@ -365,13 +363,12 @@ string[] parseEnemyConfig(string dir, string baseName, string extension, ubyte[]
     }
     return [filename];
 }
-string[] parseItemConfig(string dir, string baseName, string extension, ubyte[] source, ulong offset, Build build) {
+string[] parseItemConfig(string dir, string baseName, string extension, ubyte[] source, ulong offset, const DumpDoc doc, const CommonData commonData) {
     import std.algorithm : map;
     import std.bitmanip : bitsSet;
     import std.range:  chunks;
     auto filename = setExtension(baseName, extension);
     auto outFile = File(buildPath(dir, filename), "w");
-    immutable string[ubyte] table = getTextTable(build);
     void printPointer(uint ptr) {
         if (ptr == 0) {
             outFile.writefln!"  .DWORD NULL"();
@@ -393,7 +390,7 @@ string[] parseItemConfig(string dir, string baseName, string extension, ubyte[] 
             scope(exit) index += 4;
             return entry[index] + (entry[index+1]<<8) + (entry[index+2]<<16) + (entry[index+3]<<24);
         }
-        outFile.writefln!"  PADDEDEBTEXT \"%s\", 25"(decodeText(entry[0..24], table));
+        outFile.writefln!"  PADDEDEBTEXT \"%s\", 25"(decodeText(entry[0..24], doc.textTable));
         index = 25;
         outFile.writefln!"  .BYTE $%02X ;Type"(nextByte());
         outFile.writefln!"  .WORD %s ;Cost"(nextShort());
@@ -401,7 +398,7 @@ string[] parseItemConfig(string dir, string baseName, string extension, ubyte[] 
         if (flags == 0) {
             outFile.writeln("  .BYTE $00 ;Flags");
         } else {
-            outFile.writefln!"  .BYTE %-(ITEM_FLAGS::%s | %)"(flags.bitsSet().map!(x => itemFlags[x]));
+            outFile.writefln!"  .BYTE %-(ITEM_FLAGS::%s | %)"(flags.bitsSet().map!(x => commonData.itemFlags[x]));
         }
         outFile.writefln!"  .WORD $%04X ;Effect"(nextShort());
         outFile.writefln!"  .BYTE $%02X ;Strength"(nextByte());
@@ -414,7 +411,7 @@ string[] parseItemConfig(string dir, string baseName, string extension, ubyte[] 
     return [filename];
 }
 
-string[] parseMovement(string dir, string baseName, string extension, ubyte[] source, ulong offset, Build build) {
+string[] parseMovement(string dir, string baseName, string extension, ubyte[] source, ulong offset, const DumpDoc doc, const CommonData commonData) {
     import std.array : empty, front, popFront;
     auto filename = setExtension(baseName, extension);
     auto outFile = File(buildPath(dir, filename), "w");
@@ -763,11 +760,10 @@ string[] parseMovement(string dir, string baseName, string extension, ubyte[] so
     return [filename];
 }
 
-string[] parseStaffText(string dir, string baseName, string extension, ubyte[] source, ulong offset, Build build) {
+string[] parseStaffText(string dir, string baseName, string extension, ubyte[] source, ulong offset, const DumpDoc doc, const CommonData commonData) {
     import std.array : empty, front, popFront;
     auto filename = setExtension(baseName, extension);
     auto outFile = File(buildPath(dir, filename), "w");
-    immutable string[ubyte] table = getStaffTextTable(build);
     auto nextByte() {
         auto first = source.front;
         source.popFront();
@@ -781,10 +777,10 @@ string[] parseStaffText(string dir, string baseName, string extension, ubyte[] s
                 string tmpbuff;
                 auto arg = nextByte();
                 while (arg != 0) {
-                    if (arg !in table) {
+                    if (arg !in doc.staffTextTable) {
                         writeln(arg);
                     }
-                    tmpbuff ~= table.get(arg, format!"[%02X]"(arg));
+                    tmpbuff ~= doc.staffTextTable.get(arg, format!"[%02X]"(arg));
                     arg = nextByte();
                 }
                 outFile.writefln!"\tEBSTAFF_SMALLTEXT \"%s\""(tmpbuff);
@@ -793,10 +789,10 @@ string[] parseStaffText(string dir, string baseName, string extension, ubyte[] s
                 string tmpbuff;
                 auto arg = nextByte();
                 while (arg != 0) {
-                    if (arg !in table) {
+                    if (arg !in doc.staffTextTable) {
                         writeln(arg);
                     }
-                    tmpbuff ~= table.get(arg, format!"[%02X]"(arg));
+                    tmpbuff ~= doc.staffTextTable.get(arg, format!"[%02X]"(arg));
                     arg = nextByte();
                 }
                 outFile.writefln!"\tEBSTAFF_BIGTEXT \"%s\""(tmpbuff);

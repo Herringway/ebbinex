@@ -7,7 +7,7 @@ import std.range;
 
 import common;
 
-string[] parseFlyover(string dir, string baseName, string extension, ubyte[] source, ulong offset, Build build) {
+string[] parseFlyover(string dir, string baseName, string extension, ubyte[] source, ulong offset, const DumpDoc doc, const CommonData commonData) {
     import std.array : empty, front, popFront;
     auto filename = setExtension(baseName, extension);
     auto symbolFilename = setExtension(baseName, "symbols.asm");
@@ -15,7 +15,6 @@ string[] parseFlyover(string dir, string baseName, string extension, ubyte[] sou
     auto symbolFile = File(buildPath(dir, symbolFilename), "w");
     outFile.writefln!".INCLUDE \"%s\"\n"(setExtension(baseName.baseName, "symbols.asm"));
     string tmpbuff;
-    immutable string[ubyte] table = getTextTable(build);
     auto nextByte() {
         auto first = source.front;
         source.popFront();
@@ -23,7 +22,7 @@ string[] parseFlyover(string dir, string baseName, string extension, ubyte[] sou
         return first;
     }
     void printLabel() {
-        const label = offset in getFlyoverLabels(build);
+        const label = offset in doc.flyoverLabels;
         auto symbol = label ? *label : format!"FLYOVER_%06X"(offset);
         symbolFile.writefln!".GLOBAL %s: far"(symbol);
         outFile.writefln!"%s: ;$%06X"(symbol, offset);
@@ -38,8 +37,8 @@ string[] parseFlyover(string dir, string baseName, string extension, ubyte[] sou
     printLabel();
     while (!source.empty) {
         auto first = nextByte();
-        if (first in table) {
-            tmpbuff ~= table[first];
+        if (first in doc.textTable) {
+            tmpbuff ~= doc.textTable[first];
             continue;
         }
         flushBuff();

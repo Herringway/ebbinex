@@ -59,10 +59,10 @@ immutable string[] statusGroups = [
 ];
 
 
-string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulong offset, Build build) {
+string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulong offset, const DumpDoc doc, const CommonData commonData) {
     import std.algorithm.searching : canFind;
     import std.array : empty, front, popFront;
-    const jpText = build == Build.jpn;
+    const jpText = doc.dontUseTextTable;
     auto filename = setExtension(baseName, "ebtxt");
     auto uncompressedFilename = setExtension(baseName, "ebtxt.uncompressed");
     auto symbolFilename = setExtension(baseName, "symbols.asm");
@@ -88,12 +88,9 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
     ubyte[] raw;
     string tmpbuff;
     string tmpCompbuff;
-    immutable string[ubyte] table = getTextTable(build);
-    immutable string[size_t] renameLabels = getRenameLabels(build);
-    immutable uint[] forcedLabels = getForcedTextLabels(build);
     bool labelPrinted;
     string label(const ulong addr) {
-        return addr in renameLabels ? renameLabels[addr] : format!"TEXT_BLOCK_%06X"(addr);
+        return addr in doc.renameLabels ? doc.renameLabels[addr] : format!"TEXT_BLOCK_%06X"(addr);
     }
     auto nextByte() {
         labelPrinted = false;
@@ -140,14 +137,14 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
     }
     printLabel();
     while (!source.empty) {
-        if (forcedLabels.canFind(offset)) {
+        if (doc.forceTextLabels.canFind(offset)) {
             printLabel();
         }
         auto first = nextByte();
-        if (first in table) {
-            raw~= first;
-            tmpbuff ~= table[first];
-            tmpCompbuff ~= table[first];
+        if (first in doc.textTable) {
+            raw ~= first;
+            tmpbuff ~= doc.textTable[first];
+            tmpCompbuff ~= doc.textTable[first];
             continue;
         }
         switch (first) {
@@ -171,24 +168,24 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
             case 0x04:
                 flushBuffs();
                 auto flag = nextByte() + (nextByte()<<8);
-                writeFormatted!"\tEBTEXT_SET_EVENT_FLAG EVENT_FLAG::%s"(flag >= 0x400 ? format!"OVERFLOW%03X"(flag) : eventFlags[flag]);
+                writeFormatted!"\tEBTEXT_SET_EVENT_FLAG EVENT_FLAG::%s"(flag >= 0x400 ? format!"OVERFLOW%03X"(flag) : commonData.eventFlags[flag]);
                 break;
             case 0x05:
                 flushBuffs();
                 auto flag = nextByte() + (nextByte()<<8);
-                writeFormatted!"\tEBTEXT_CLEAR_EVENT_FLAG EVENT_FLAG::%s"(flag >= 0x400 ? format!"OVERFLOW%03X"(flag) : eventFlags[flag]);
+                writeFormatted!"\tEBTEXT_CLEAR_EVENT_FLAG EVENT_FLAG::%s"(flag >= 0x400 ? format!"OVERFLOW%03X"(flag) : commonData.eventFlags[flag]);
                 break;
             case 0x06:
                 flushBuffs();
                 auto flag = nextByte() + (nextByte()<<8);
                 auto dest = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
                 //assert(flag < 0x400, "Event flag number too high");
-                writeFormatted!"\tEBTEXT_JUMP_IF_FLAG_SET %s, EVENT_FLAG::%s"(label(dest), flag >= 0x400 ? format!"OVERFLOW%03X"(flag) : eventFlags[flag]);
+                writeFormatted!"\tEBTEXT_JUMP_IF_FLAG_SET %s, EVENT_FLAG::%s"(label(dest), flag >= 0x400 ? format!"OVERFLOW%03X"(flag) : commonData.eventFlags[flag]);
                 break;
             case 0x07:
                 flushBuffs();
                 auto flag = nextByte() + (nextByte()<<8);
-                writeFormatted!"\tEBTEXT_CHECK_EVENT_FLAG EVENT_FLAG::%s"(eventFlags[flag]);
+                writeFormatted!"\tEBTEXT_CHECK_EVENT_FLAG EVENT_FLAG::%s"(commonData.eventFlags[flag]);
                 break;
             case 0x08:
                 flushBuffs();
@@ -256,11 +253,11 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                 break;
             case 0x15: .. case 0x17:
                 flushBuff();
-                if (build.supportsCompressedText) {
+                if (doc.supportsCompressedText) {
                     auto arg = nextByte();
                     auto id = ((first - 0x15)<<8) + arg;
-                    outFile.writefln!"\tEBTEXT_COMPRESSED_BANK_%d $%02X ;\"%s\""(first-0x14, arg, getCompressedStrings(build)[id]);
-                    tmpCompbuff ~= getCompressedStrings(build)[id];
+                    outFile.writefln!"\tEBTEXT_COMPRESSED_BANK_%d $%02X ;\"%s\""(first-0x14, arg, doc.compressedTextStrings[id]);
+                    tmpCompbuff ~= doc.compressedTextStrings[id];
                 } else {
                     writeFormatted!"UNHANDLED: %02X"(first);
                 }
@@ -274,7 +271,7 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                         break;
                     case 0x01:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_OPEN_WINDOW WINDOW::%s"(windows[arg]);
+                        writeFormatted!"\tEBTEXT_OPEN_WINDOW WINDOW::%s"(commonData.windows[arg]);
                         break;
                     case 0x02:
                         writeLine("\tEBTEXT_UNKNOWN_CC_18_02");
@@ -328,7 +325,7 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                         auto arg = nextByte();
                         auto statusGroup = nextByte();
                         auto status = nextByte();
-                        writeFormatted!"\tEBTEXT_INFLICT_STATUS PARTY_MEMBER_TEXT::%s, $%02X, $%02X"(partyMembers[arg+1], statusGroup, status);
+                        writeFormatted!"\tEBTEXT_INFLICT_STATUS PARTY_MEMBER_TEXT::%s, $%02X, $%02X"(commonData.partyMembers[arg+1], statusGroup, status);
                         break;
                     case 0x10:
                         auto arg = nextByte();
@@ -513,7 +510,7 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                         break;
                     case 0x05:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_PRINT_ITEM_NAME ITEM::%s"(items[arg]);
+                        writeFormatted!"\tEBTEXT_PRINT_ITEM_NAME ITEM::%s"(commonData.items[arg]);
                         break;
                     case 0x06:
                         auto arg = nextByte();
@@ -584,12 +581,12 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                     case 0x00:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_GIVE_ITEM_TO_CHARACTER $%02X, ITEM::%s"(arg, items[arg2]);
+                        writeFormatted!"\tEBTEXT_GIVE_ITEM_TO_CHARACTER $%02X, ITEM::%s"(arg, commonData.items[arg2]);
                         break;
                     case 0x01:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_TAKE_ITEM_FROM_CHARACTER $%02X, ITEM::%s"(arg, items[arg2]);
+                        writeFormatted!"\tEBTEXT_TAKE_ITEM_FROM_CHARACTER $%02X, ITEM::%s"(arg, commonData.items[arg2]);
                         break;
                     case 0x02:
                         auto arg = nextByte();
@@ -602,12 +599,12 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                     case 0x04:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_CHECK_IF_CHARACTER_DOESNT_HAVE_ITEM $%02X, ITEM::%s"(arg, items[arg2]);
+                        writeFormatted!"\tEBTEXT_CHECK_IF_CHARACTER_DOESNT_HAVE_ITEM $%02X, ITEM::%s"(arg, commonData.items[arg2]);
                         break;
                     case 0x05:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_CHECK_IF_CHARACTER_HAS_ITEM $%02X, ITEM::%s"(arg, items[arg2]);
+                        writeFormatted!"\tEBTEXT_CHECK_IF_CHARACTER_HAS_ITEM $%02X, ITEM::%s"(arg, commonData.items[arg2]);
                         break;
                     case 0x06:
                         auto arg = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
@@ -627,11 +624,11 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                         break;
                     case 0x0A:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_GET_BUY_PRICE_OF_ITEM ITEM::%s"(items[arg]);
+                        writeFormatted!"\tEBTEXT_GET_BUY_PRICE_OF_ITEM ITEM::%s"(commonData.items[arg]);
                         break;
                     case 0x0B:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_GET_SELL_PRICE_OF_ITEM ITEM::%s"(items[arg]);
+                        writeFormatted!"\tEBTEXT_GET_SELL_PRICE_OF_ITEM ITEM::%s"(commonData.items[arg]);
                         break;
                     case 0x0C:
                         auto arg = nextByte() + (nextByte()<<8);
@@ -641,12 +638,12 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                         auto who = nextByte();
                         auto what = nextByte();
                         auto what2 = nextByte();
-                        writeFormatted!"\tEBTEXT_CHARACTER_HAS_AILMENT $%02X, STATUS_GROUP::%s, $%02X"(who, statusGroups[what - 1], what2);
+                        writeFormatted!"\tEBTEXT_CHARACTER_HAS_AILMENT $%02X, STATUS_GROUP::%s, $%02X"(who, commonData.statusGroups[what - 1], what2);
                         break;
                     case 0x0E:
                         auto who = nextByte();
                         auto what = nextByte();
-                        writeFormatted!"\tEBTEXT_GIVE_ITEM_TO_CHARACTER_B $%02X, ITEM::%s"(who, items[what]);
+                        writeFormatted!"\tEBTEXT_GIVE_ITEM_TO_CHARACTER_B $%02X, ITEM::%s"(who, commonData.items[what]);
                         break;
                     case 0x0F:
                         auto arg = nextByte() + (nextByte()<<8);
@@ -802,7 +799,7 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                     case 0x00:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_PLAY_MUSIC $%02X, MUSIC::%s"(arg, musicTracks[arg2]);
+                        writeFormatted!"\tEBTEXT_PLAY_MUSIC $%02X, MUSIC::%s"(arg, commonData.musicTracks[arg2]);
                         break;
                     case 0x01:
                         auto arg = nextByte();
@@ -810,7 +807,7 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                         break;
                     case 0x02:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_PLAY_SOUND SFX::%s"(sfx[arg]);
+                        writeFormatted!"\tEBTEXT_PLAY_SOUND SFX::%s"(commonData.sfx[arg]);
                         break;
                     case 0x03:
                         writeLine("\tEBTEXT_RESTORE_DEFAULT_MUSIC");
@@ -831,11 +828,11 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                         break;
                     case 0x11:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_ADD_PARTY_MEMBER PARTY_MEMBER::%s"(partyMembers[arg]);
+                        writeFormatted!"\tEBTEXT_ADD_PARTY_MEMBER PARTY_MEMBER::%s"(commonData.partyMembers[arg]);
                         break;
                     case 0x12:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_REMOVE_PARTY_MEMBER PARTY_MEMBER::%s"(partyMembers[arg]);
+                        writeFormatted!"\tEBTEXT_REMOVE_PARTY_MEMBER PARTY_MEMBER::%s"(commonData.partyMembers[arg]);
                         break;
                     case 0x13:
                         auto arg = nextByte();
@@ -850,7 +847,7 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                         auto arg = nextByte() + (nextByte()<<8);
                         auto arg2 = nextByte() + (nextByte()<<8);
                         auto arg3 = nextByte();
-                        writeFormatted!"\tEBTEXT_GENERATE_ACTIVE_SPRITE OVERWORLD_SPRITE::%s, EVENT_SCRIPT::%s, $%02X"(sprites[arg], movements[arg2], arg3);
+                        writeFormatted!"\tEBTEXT_GENERATE_ACTIVE_SPRITE OVERWORLD_SPRITE::%s, EVENT_SCRIPT::%s, $%02X"(commonData.sprites[arg], commonData.movements[arg2], arg3);
                         break;
                     case 0x16:
                         auto arg = nextByte() + (nextByte()<<8);
@@ -861,7 +858,7 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                         auto arg = nextByte() + (nextByte()<<8);
                         auto arg2 = nextByte() + (nextByte()<<8);
                         auto arg3 = nextByte();
-                        writeFormatted!"\tEBTEXT_CREATE_ENTITY $%04X, EVENT_SCRIPT::%s, $%02X"(arg, movements[arg2], arg3);
+                        writeFormatted!"\tEBTEXT_CREATE_ENTITY $%04X, EVENT_SCRIPT::%s, $%02X"(arg, commonData.movements[arg2], arg3);
                         break;
                     case 0x1A:
                         auto arg = nextByte() + (nextByte()<<8);
@@ -889,7 +886,7 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                     case 0x1F:
                         auto arg = nextByte() + (nextByte()<<8);
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_DELETE_GENERATED_SPRITE OVERWORLD_SPRITE::%s, $%02X"(sprites[arg], arg2);
+                        writeFormatted!"\tEBTEXT_DELETE_GENERATED_SPRITE OVERWORLD_SPRITE::%s, $%02X"(commonData.sprites[arg], arg2);
                         break;
                     case 0x20:
                         auto arg = nextByte();
@@ -1064,12 +1061,12 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                     case 0xF1:
                         auto arg = nextByte() + (nextByte()<<8);
                         auto arg2 = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_SET_TPT_MOVEMENT_CODE $%04X, EVENT_SCRIPT::%s"(arg, movements[arg2]);
+                        writeFormatted!"\tEBTEXT_SET_TPT_MOVEMENT_CODE $%04X, EVENT_SCRIPT::%s"(arg, commonData.movements[arg2]);
                         break;
                     case 0xF2:
                         auto arg = nextByte() + (nextByte()<<8);
                         auto arg2 = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_SET_SPRITE_MOVEMENT_CODE OVERWORLD_SPRITE::%s, EVENT_SCRIPT::%s"(sprites[arg], movements[arg2]);
+                        writeFormatted!"\tEBTEXT_SET_SPRITE_MOVEMENT_CODE OVERWORLD_SPRITE::%s, EVENT_SCRIPT::%s"(commonData.sprites[arg], commonData.movements[arg2]);
                         break;
                     case 0xF3:
                         auto arg = nextByte() + (nextByte()<<8);
