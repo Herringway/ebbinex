@@ -17,3 +17,4 @@ ebbinex-test-*
 *.lst
 bin
 dub.selections.json
+.vs
