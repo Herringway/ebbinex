@@ -7,7 +7,7 @@
 	"copyright": "Copyright © 2018, Cameron",
 	"license": "proprietary",
 	"dependencies": {
-		"d-comp": "*",
+		"compy": "*",
 		"siryul": "~>0.6"
 	}
 }
