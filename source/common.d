@@ -7,12 +7,14 @@ struct DumpDoc {
     DumpInfo[] dumpEntries;
     string[ubyte] textTable;
     string[ubyte] staffTextTable;
+    string[ushort] flyoverTextTable;
     string[size_t] flyoverLabels;
     string[size_t] renameLabels;
     string[] compressedTextStrings;
     string defaultDumpPath = "bin";
     string romIdentifier;
     bool dontUseTextTable;
+    bool multibyteFlyovers;
     bool supportsCompressedText() const @safe pure {
         return compressedTextStrings.length > 0;
     }

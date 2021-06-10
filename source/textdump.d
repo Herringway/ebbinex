@@ -104,7 +104,7 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
             return;
         }
         if (jpText) {
-            outFile.writefln!"\t.BYTE \"%($%02X, %) ;%s\""(raw, tmpbuff);
+            outFile.writefln!"\t.BYTE %($%02X, %) ;\"%s\""(raw, tmpbuff);
         } else {
             outFile.writefln!"\tEBTEXT \"%s\""(tmpbuff);
         }
@@ -920,6 +920,9 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                     case 0x52:
                         auto arg = nextByte();
                         writeFormatted!"\tEBTEXT_CREATE_NUMBER_SELECTOR $%02X"(arg);
+                        break;
+                    case 0x60:
+                        writeLine("\t.BYTE $1F, $60");
                         break;
                     case 0x61:
                         writeLine("\tEBTEXT_TRIGGER_MOVEMENT_CODE");

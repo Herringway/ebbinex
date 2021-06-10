@@ -15,6 +15,8 @@ string[] parseFlyover(string dir, string baseName, string extension, ubyte[] sou
     auto symbolFile = File(buildPath(dir, symbolFilename), "w");
     outFile.writefln!".INCLUDE \"%s\"\n"(setExtension(baseName.baseName, "symbols.asm"));
     string tmpbuff;
+    ubyte[] raw;
+    ushort[] raw2;
     auto nextByte() {
         auto first = source.front;
         source.popFront();
@@ -31,14 +33,32 @@ string[] parseFlyover(string dir, string baseName, string extension, ubyte[] sou
         if (tmpbuff == []) {
             return;
         }
-        outFile.writefln!"\tEBTEXT \"%s\""(tmpbuff);
+        if (doc.dontUseTextTable) {
+            if (doc.multibyteFlyovers) {
+                outFile.writefln!"\t.WORD %($%04X, %) ;\"%s\""(raw2, tmpbuff);
+            } else {
+                outFile.writefln!"\t.BYTE %($%02X, %) ;\"%s\""(raw, tmpbuff);
+            }
+        } else {
+            outFile.writefln!"\tEBTEXT \"%s\""(tmpbuff);
+        }
         tmpbuff = [];
+        raw = [];
+        raw2 = [];
     }
     printLabel();
     while (!source.empty) {
-        auto first = nextByte();
-        if (first in doc.textTable) {
-            tmpbuff ~= doc.textTable[first];
+        ushort first = nextByte();
+        if (doc.multibyteFlyovers && first >= 0x80) {
+            first = cast(ushort)((first<<8) | nextByte());
+        }
+        if (first in doc.flyoverTextTable) {
+            tmpbuff ~= doc.flyoverTextTable[first];
+            if (doc.multibyteFlyovers) {
+                raw2 ~= (first>>8) | ((first&0xFF)<<8);
+            } else {
+                raw ~= first&0xFF;
+            }
             continue;
         }
         flushBuff();
@@ -66,7 +86,11 @@ string[] parseFlyover(string dir, string baseName, string extension, ubyte[] sou
                 outFile.writeln("\tEBFLYOVER_09");
                 break;
             default:
-                outFile.writefln!"UNHANDLED: %02X"(first);
+                if (doc.multibyteFlyovers && first >= 0x80) {
+                    outFile.writefln!"\t.WORD $%04X ;???"((first>>8) | ((first&0xFF)<<8));
+                } else {
+                    outFile.writefln!"\t.BYTE $%02X ;???"(first);
+                }
                 break;
         }
     }

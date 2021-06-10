@@ -777,10 +777,14 @@ string[] parseStaffText(string dir, string baseName, string extension, ubyte[] s
                 string tmpbuff;
                 auto arg = nextByte();
                 while (arg != 0) {
-                    if (arg !in doc.staffTextTable) {
-                        writeln(arg);
+                    if (doc.dontUseTextTable) {
+                        tmpbuff ~= format!"\\x%02X"(arg);
+                    } else {
+                        if (arg !in doc.staffTextTable) {
+                            writeln(arg);
+                        }
+                        tmpbuff ~= doc.staffTextTable.get(arg, format!"[%02X]"(arg));
                     }
-                    tmpbuff ~= doc.staffTextTable.get(arg, format!"[%02X]"(arg));
                     arg = nextByte();
                 }
                 outFile.writefln!"\tEBSTAFF_SMALLTEXT \"%s\""(tmpbuff);
@@ -789,10 +793,14 @@ string[] parseStaffText(string dir, string baseName, string extension, ubyte[] s
                 string tmpbuff;
                 auto arg = nextByte();
                 while (arg != 0) {
-                    if (arg !in doc.staffTextTable) {
-                        writeln(arg);
+                    if (doc.dontUseTextTable) {
+                        tmpbuff ~= format!"\\x%02X"(arg);
+                    } else {
+                        if (arg !in doc.staffTextTable) {
+                            writeln(arg);
+                        }
+                        tmpbuff ~= doc.staffTextTable.get(arg, format!"[%02X]"(arg));
                     }
-                    tmpbuff ~= doc.staffTextTable.get(arg, format!"[%02X]"(arg));
                     arg = nextByte();
                 }
                 outFile.writefln!"\tEBSTAFF_BIGTEXT \"%s\""(tmpbuff);
