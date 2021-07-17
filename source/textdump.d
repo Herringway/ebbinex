@@ -899,7 +899,7 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                         break;
                     case 0x23:
                         auto arg = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_TRIGGER_BATTLE $%04X"(arg);
+                        writeFormatted!"\tEBTEXT_TRIGGER_BATTLE ENEMY_GROUP::%s"(commonData.enemyGroups[arg]);
                         break;
                     case 0x30:
                         writeLine("\tEBTEXT_USE_NORMAL_FONT");

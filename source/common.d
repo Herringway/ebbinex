@@ -34,6 +34,7 @@ struct CommonData {
     string[] genders;
     string[] enemyTypes;
     string[] itemFlags;
+    string[] enemyGroups;
 }
 
 ubyte[] readFile(string filename) {
