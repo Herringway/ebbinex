@@ -124,8 +124,10 @@ void dumpData(const DumpDoc doc, const CommonData commonData, ubyte[] source, co
         default:
             if (info.compressed) {
                 files ~= writeFile!writeRaw(temporary, info.name, info.extension ~ ".lzhal", data, offset, doc, commonData);
-                if (decompress) {
-                    files ~= writeFile!writeCompressed(temporary, info.name, info.extension, data, offset, doc, commonData);
+                version(Have_compy) {
+                    if (decompress) {
+                        files ~= writeFile!writeCompressed(temporary, info.name, info.extension, data, offset, doc, commonData);
+                    }
                 }
             } else {
                 files = writeFile!writeRaw(temporary, info.name, info.extension, data, offset, doc, commonData);
@@ -161,11 +163,13 @@ string[] writeRaw(string dir, string baseName, string extension, ubyte[] source,
 	File(buildPath(dir, filename), "w").rawWrite(source);
     return [filename];
 }
-string[] writeCompressed(string dir, string baseName, string extension, ubyte[] source, ulong offset, const DumpDoc, const CommonData commonData) {
-    import compy : decomp, Format;
-    auto filename = setExtension(baseName, extension);
-    File(buildPath(dir, filename), "w").rawWrite(decomp(Format.HALLZ2, source));
-    return [filename];
+version(Have_compy) {
+    string[] writeCompressed(string dir, string baseName, string extension, ubyte[] source, ulong offset, const DumpDoc, const CommonData commonData) {
+        import compy : decomp, Format;
+        auto filename = setExtension(baseName, extension);
+        File(buildPath(dir, filename), "w").rawWrite(decomp(Format.HALLZ2, source));
+        return [filename];
+    }
 }
 
 string[] parseNPCConfig(string dir, string baseName, string extension, ubyte[] source, ulong offset, const DumpDoc, const CommonData commonData) {
