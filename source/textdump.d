@@ -6,64 +6,27 @@ import std.stdio;
 
 import common;
 
-version = compressedOutput;
+struct Enum {
+    string type;
+    string member;
+}
 
-immutable string[][] ailments = [
-    [
-        "UNCONSCIOUS",
-        "DIAMONDIZED",
-        "PARALYZED",
-        "NAUSEOUS",
-        "POISONED",
-        "SUNSTROKE",
-        "COLD"
-    ],
-    [
-        "MUSHROOMIZED",
-        "POSSESSED"
-    ],
-    [
-        "ASLEEP",
-        "CRYING",
-        "IMMOBILIZED",
-        "SOLIDIFIED"
-    ],
-    [
-        "STRANGE"
-    ],
-    [
-        "CANT_CONCENTRATE",
-        "CANT_CONCENTRATE2",
-        "CANT_CONCENTRATE3",
-        "CANT_CONCENTRATE4",
-    ],
-    [
-        "HOMESICK"
-    ],
-    [
-        "PSI_SHIELD_POWER",
-        "PSI_SHIELD",
-        "SHIELD_POWER",
-        "SHIELD"
-    ]
-];
+enum PointerType {
+    text,
+    func
+}
 
-immutable string[] statusGroups = [
-    "PERSISTENT_EASYHEAL",
-    "PERSISTENT_HARDHEAL",
-    "TEMPORARY",
-    "STRANGENESS",
-    "CONCENTRATION",
-    "HOMESICKNESS",
-    "SHIELD",
-];
-
+struct Pointer {
+    PointerType type;
+    size_t val;
+}
 
 string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulong offset, const DumpDoc doc, const CommonData commonData) {
     import std.algorithm.searching : canFind;
     import std.array : empty, front, popFront;
     const jpText = doc.dontUseTextTable;
-    auto filename = setExtension(baseName, "ebtxt");
+    const compressedOutput = !jpText && !doc.d;
+    auto filename = setExtension(baseName, doc.d ? "d" : "ebtxt");
     auto uncompressedFilename = setExtension(baseName, "ebtxt.uncompressed");
     auto symbolFilename = setExtension(baseName, "symbols.asm");
     auto outFile = File(buildPath(dir, filename), "w");
@@ -71,20 +34,25 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
     if (!jpText) {
         outFileC = File(buildPath(dir, uncompressedFilename), "w");
      }
-    auto symbolFile = File(buildPath(dir, symbolFilename), "w");
+    File symbolFile;
+    if (!doc.d) {
+        symbolFile = File(buildPath(dir, symbolFilename), "w");
+    }
     void writeFormatted(string fmt, T...)(T args) {
         outFile.writefln!fmt(args);
-        if (!jpText) {
+        if (compressedOutput) {
             outFileC.writefln!fmt(args);
         }
     }
     void writeLine(T...)(T args) {
         outFile.writeln(args);
-        if (!jpText) {
+        if (compressedOutput) {
             outFileC.writeln(args);
         }
     }
-    writeFormatted!".INCLUDE \"%s\"\n"(setExtension(baseName.baseName, "symbols.asm"));
+    if (!doc.d) {
+        writeFormatted!".INCLUDE \"%s\"\n"(setExtension(baseName.baseName, "symbols.asm"));
+    }
     ubyte[] raw;
     string tmpbuff;
     string tmpCompbuff;
@@ -99,20 +67,98 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
         offset++;
         return first;
     }
+    ushort nextShort() {
+        return nextByte() + (nextByte()<<8);
+    }
+    void printValue(T)(File file, T arg, bool printSeparator) {
+        static if (is(T == ubyte) || is(T == byte) || is(T == short) || is(T == ushort) || is(T == int) || is(T == uint)) {
+            if (!doc.d) {
+                import std.conv : text;
+                file.writef("$%0"~text(T.sizeof * 2)~"X", arg);
+            } else {
+                file.writef!"%d"(arg);
+            }
+        } else static if (is(T == ubyte[])) {
+            if (doc.d) {
+                file.writef!"[ %(0x%02X, %) ]"(arg);
+            } else {
+                file.writef!"%($%02X, %)"(arg);
+            }
+        } else static if (is(T == string)) {
+            file.writef!"\"%s\""(arg);
+        } else static if (is(T == Pointer)) {
+            if (!doc.d) {
+                file.write(label(arg.val));
+            } else {
+                file.write("&", label(arg.val));
+            }
+        } else static if (is(T == Pointer[])) {
+            foreach (i, v; arg) {
+                printValue(file, v, printSeparator || (i != (arg.length - 1)));
+            }
+        } else static if (is(T == Enum)) {
+            file.write(arg.type);
+            if (doc.d) {
+                file.write(".");
+            } else {
+                file.write("::");
+            }
+            file.write(arg.member);
+        } else {
+            static assert(0, "Unhandled type");
+        }
+        if (printSeparator) {
+            file.write(", ");
+        }
+    }
+    void writeCommandToFile(T...)(File file, string name, T args) {
+        file.write("\t", name);
+        if (doc.d) {
+            file.write("(");
+        } else if (args.length > 0) {
+            file.write(" ");
+        }
+        foreach (idx, arg; args) {
+            printValue(file, arg, idx != (args.length - 1));
+        }
+        if (doc.d) {
+            file.write("),");
+        }
+        file.writeln();
+    }
+    void writeCommentedCommandToFile(T...)(File file, string name, T args, string comment) {
+        file.write("\t", name);
+        if (doc.d) {
+            file.write("(");
+        } else if (args.length > 0) {
+            file.write(" ");
+        }
+        foreach (idx, arg; args) {
+            printValue(file, arg, idx != (args.length - 1));
+        }
+        if (doc.d) {
+            file.write("), //");
+        } else {
+            file.write(" ;");
+        }
+        file.writeln(comment);
+    }
     void flushBuff() {
         if (tmpbuff == []) {
             return;
         }
         if (jpText) {
-            outFile.writefln!"\t.BYTE %($%02X, %) ;\"%s\""(raw, tmpbuff);
+            writeCommentedCommandToFile(outFile, ".BYTE", raw, tmpbuff);
+        } else if (doc.d) {
+            writeCommandToFile(outFile, "EBString", tmpbuff);
         } else {
-            outFile.writefln!"\tEBTEXT \"%s\""(tmpbuff);
+            writeCommandToFile(outFile, "EBTEXT", tmpbuff);
         }
         raw = [];
         tmpbuff = [];
     }
     void flushCompressedBuff() {
-        if ((tmpCompbuff == []) || jpText) {
+        if ((tmpCompbuff == []) || !compressedOutput) {
             return;
         }
         outFileC.writefln!"\tEBTEXT \"%s\""(tmpCompbuff);
@@ -120,25 +166,58 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
     }
     void flushBuffs() {
         flushBuff();
-        if (!jpText) {
+        if (compressedOutput) {
             flushCompressedBuff();
         }
     }
+    uint localID = 0;
     void printLabel() {
         if (labelPrinted || source.empty) {
             return;
         }
         const labelstr = label(offset);
         flushBuffs();
-        symbolFile.writefln!".GLOBAL %s: far"(labelstr);
-        writeLine();
-        writeFormatted!"%s: ;$%06X"(labelstr, offset);
+        if (!doc.d) {
+            symbolFile.writefln!".GLOBAL %s: far"(labelstr);
+            writeLine();
+            writeFormatted!"%s: ;$%06X"(labelstr, offset);
+        } else {
+            writeLine("];");
+            writeLine("");
+            writeFormatted!"immutable ubyte[] %s = [ //$%06X"(labelstr, offset);
+        }
         labelPrinted = true;
+        localID = 0;
+    }
+    void printLocalLabel() {
+        if (labelPrinted || source.empty) {
+            return;
+        }
+        flushBuffs();
+        if (!doc.d) {
+            writeFormatted!"@local%02d: ;%06X"(localID, offset);
+        } else {
+            //writeLine("];");
+            //writeLine("");
+            //writeFormatted!"immutable ubyte[] %s = [ //$%06X"(labelstr, offset);
+        }
+        localID++;
+        labelPrinted = true;
+    }
+    void writeCommand(T...)(string name, T args) {
+        flushBuffs();
+        writeCommandToFile(outFile, name, args);
+        if (compressedOutput) {
+            writeCommandToFile(outFileC, name, args);
+        }
     }
     printLabel();
     while (!source.empty) {
-        if (doc.forceTextLabels.canFind(offset)) {
+        if ((offset in doc.renameLabels) || doc.forceTextLabels.canFind(offset)) {
             printLabel();
+        }
+        if (doc.forceLocalLabels.canFind(offset)) {
+            printLocalLabel();
         }
         auto first = nextByte();
         if (first in doc.textTable) {
@@ -149,280 +228,243 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
         }
         switch (first) {
             case 0x00:
-                flushBuffs();
-                writeLine("\tEBTEXT_LINE_BREAK");
+                writeCommand("EBTEXT_LINE_BREAK");
                 break;
             case 0x01:
-                flushBuffs();
-                writeLine("\tEBTEXT_START_NEW_LINE");
+                writeCommand("EBTEXT_START_NEW_LINE");
                 break;
             case 0x02:
-                flushBuffs();
-                writeLine("\tEBTEXT_END_BLOCK");
+                writeCommand("EBTEXT_END_BLOCK");
                 printLabel();
                 break;
             case 0x03:
-                flushBuffs();
-                writeLine("\tEBTEXT_HALT_WITH_PROMPT");
+                writeCommand("EBTEXT_HALT_WITH_PROMPT");
                 break;
             case 0x04:
-                flushBuffs();
-                auto flag = nextByte() + (nextByte()<<8);
-                writeFormatted!"\tEBTEXT_SET_EVENT_FLAG EVENT_FLAG::%s"(flag >= 0x400 ? format!"OVERFLOW%03X"(flag) : commonData.eventFlags[flag]);
+                auto flag = nextShort();
+                writeCommand("EBTEXT_SET_EVENT_FLAG", Enum(commonData.enums["eventFlags"], commonData.eventFlags[flag]));
                 break;
             case 0x05:
-                flushBuffs();
                 auto flag = nextByte() + (nextByte()<<8);
-                writeFormatted!"\tEBTEXT_CLEAR_EVENT_FLAG EVENT_FLAG::%s"(flag >= 0x400 ? format!"OVERFLOW%03X"(flag) : commonData.eventFlags[flag]);
+                writeCommand("EBTEXT_CLEAR_EVENT_FLAG", Enum(commonData.enums["eventFlags"], commonData.eventFlags[flag]));
                 break;
             case 0x06:
-                flushBuffs();
                 auto flag = nextByte() + (nextByte()<<8);
                 auto dest = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                //assert(flag < 0x400, "Event flag number too high");
-                writeFormatted!"\tEBTEXT_JUMP_IF_FLAG_SET %s, EVENT_FLAG::%s"(label(dest), flag >= 0x400 ? format!"OVERFLOW%03X"(flag) : commonData.eventFlags[flag]);
+                writeCommand("EBTEXT_JUMP_IF_FLAG_SET", Pointer(PointerType.text, dest), Enum(commonData.enums["eventFlags"], commonData.eventFlags[flag]));
                 break;
             case 0x07:
-                flushBuffs();
                 auto flag = nextByte() + (nextByte()<<8);
-                writeFormatted!"\tEBTEXT_CHECK_EVENT_FLAG EVENT_FLAG::%s"(commonData.eventFlags[flag]);
+                writeCommand("EBTEXT_CHECK_EVENT_FLAG", Enum(commonData.enums["eventFlags"], commonData.eventFlags[flag]));
                 break;
             case 0x08:
-                flushBuffs();
                 auto dest = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                writeFormatted!"\tEBTEXT_CALL_TEXT %s"(label(dest));
+                writeCommand("EBTEXT_CALL_TEXT", Pointer(PointerType.text, dest));
                 break;
             case 0x09:
-                flushBuffs();
                 auto argCount = nextByte();
-                string[] dests;
+                Pointer[] dests;
                 while(argCount--) {
-                    dests ~= label(nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24));
+                    dests ~= Pointer(PointerType.text, nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24));
                 }
-                writeFormatted!"\tEBTEXT_JUMP_MULTI %-(%s%|, %)"(dests);
+                writeCommand("EBTEXT_JUMP_MULTI", dests);
                 break;
             case 0x0A:
-                flushBuffs();
                 auto dest = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                writeFormatted!"\tEBTEXT_JUMP %s\n"(label(dest));
+                writeCommand("EBTEXT_JUMP", Pointer(PointerType.text, dest));
                 break;
             case 0x0B:
-                flushBuffs();
-                auto arg = nextByte();
-                writeFormatted!"\tEBTEXT_TEST_IF_WORKMEM_TRUE $%02X"(arg);
+                writeCommand("EBTEXT_TEST_IF_WORKMEM_TRUE", nextByte());
                 break;
             case 0x0C:
-                flushBuffs();
-                auto arg = nextByte();
-                writeFormatted!"\tEBTEXT_TEST_IF_WORKMEM_FALSE $%02X"(arg);
+                writeCommand("EBTEXT_TEST_IF_WORKMEM_FALSE", nextByte());
                 break;
             case 0x0D:
-                flushBuffs();
-                auto dest = nextByte();
-                writeFormatted!"\tEBTEXT_COPY_TO_ARGMEM $%02X"(dest);
+                writeCommand("EBTEXT_COPY_TO_ARGMEM", nextByte());
                 break;
             case 0x0E:
-                flushBuffs();
-                auto dest = nextByte();
-                writeFormatted!"\tEBTEXT_STORE_TO_ARGMEM $%02X"(dest);
+                writeCommand("EBTEXT_STORE_TO_ARGMEM", nextByte());
                 break;
             case 0x0F:
-                flushBuffs();
-                writeLine("\tEBTEXT_INCREMENT_WORKMEM");
+                writeCommand("EBTEXT_INCREMENT_WORKMEM");
                 break;
             case 0x10:
-                flushBuffs();
-                auto time = nextByte();
-                writeFormatted!"\tEBTEXT_PAUSE %d"(time);
+                writeCommand("EBTEXT_PAUSE", nextByte());
                 break;
             case 0x11:
-                flushBuffs();
-                writeLine("\tEBTEXT_CREATE_SELECTION_MENU");
+                writeCommand("EBTEXT_CREATE_SELECTION_MENU");
                 break;
             case 0x12:
-                flushBuffs();
-                writeLine("\tEBTEXT_CLEAR_TEXT_LINE");
+                writeCommand("EBTEXT_CLEAR_TEXT_LINE");
                 break;
             case 0x13:
-                flushBuffs();
-                writeLine("\tEBTEXT_HALT_WITHOUT_PROMPT");
+                writeCommand("EBTEXT_HALT_WITHOUT_PROMPT");
                 break;
             case 0x14:
-                flushBuffs();
-                writeLine("\tEBTEXT_HALT_WITH_PROMPT_ALWAYS");
+                writeCommand("EBTEXT_HALT_WITH_PROMPT_ALWAYS");
                 break;
             case 0x15: .. case 0x17:
                 flushBuff();
-                if (doc.supportsCompressedText) {
-                    auto arg = nextByte();
-                    auto id = ((first - 0x15)<<8) + arg;
-                    outFile.writefln!"\tEBTEXT_COMPRESSED_BANK_%d $%02X ;\"%s\""(first-0x14, arg, doc.compressedTextStrings[id]);
-                    tmpCompbuff ~= doc.compressedTextStrings[id];
-                } else {
-                    writeFormatted!"UNHANDLED: %02X"(first);
-                }
+                auto arg = nextByte();
+                auto id = ((first - 0x15)<<8) + arg;
+                writeCommentedCommandToFile(outFile, format!"EBTEXT_COMPRESSED_BANK_%d"(first - 0x14), arg, doc.compressedTextStrings[id]);
+                tmpCompbuff ~= doc.compressedTextStrings[id];
                 break;
             case 0x18:
-                flushBuffs();
                 auto subCC = nextByte();
                 switch (subCC) {
                     case 0x00:
-                        writeLine("\tEBTEXT_CLOSE_WINDOW");
+                        writeCommand("EBTEXT_CLOSE_WINDOW");
                         break;
                     case 0x01:
-                        auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_OPEN_WINDOW WINDOW::%s"(commonData.windows[arg]);
+                        writeCommand("EBTEXT_OPEN_WINDOW", Enum(commonData.enums["windows"], commonData.windows[nextByte()]));
                         break;
                     case 0x02:
-                        writeLine("\tEBTEXT_UNKNOWN_CC_18_02");
+                        writeCommand("EBTEXT_UNKNOWN_CC_18_02");
                         break;
                     case 0x03:
-                        auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_SWITCH_TO_WINDOW $%02X"(arg);
+                        writeCommand("EBTEXT_SWITCH_TO_WINDOW", Enum(commonData.enums["windows"], commonData.windows[nextByte()]));
                         break;
                     case 0x04:
-                        writeLine("\tEBTEXT_CLOSE_ALL_WINDOWS");
+                        writeCommand("EBTEXT_CLOSE_ALL_WINDOWS");
                         break;
                     case 0x05:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_FORCE_TEXT_ALIGNMENT $%02X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_FORCE_TEXT_ALIGNMENT", arg, arg2);
                         break;
                     case 0x06:
-                        writeLine("\tEBTEXT_CLEAR_WINDOW");
+                        writeCommand("EBTEXT_CLEAR_WINDOW");
                         break;
                     case 0x07:
                         auto arg = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_CHECK_FOR_INEQUALITY $%06X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_CHECK_FOR_INEQUALITY", arg, arg2);
                         break;
                     case 0x08:
                         auto arg = nextByte() + (nextByte()<<8) + (nextByte()<<16);
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_18_08 $%06X"(arg);
+                        writeCommand("EBTEXT_UNKNOWN_CC_18_08", arg);
                         break;
                     case 0x09:
-                        writeLine("\tEBTEXT_UNKNOWN_CC_18_09");
+                        writeCommand("EBTEXT_UNKNOWN_CC_18_09");
                         break;
                     case 0x0A:
-                        writeLine("\tEBTEXT_SHOW_WALLET_WINDOW");
+                        writeCommand("EBTEXT_SHOW_WALLET_WINDOW");
                         break;
                     default:
-                        writeFormatted!"UNHANDLED: 18 %02X"(subCC);
-                        break;
+                        assert(0, format!"UNHANDLED: 18 %02X"(subCC));
                 }
                 break;
             case 0x19:
-                flushBuffs();
                 auto subCC = nextByte();
                 switch (subCC) {
                     case 0x02:
-                        writeLine("\tEBTEXT_LOAD_STRING_TO_MEMORY");
+                        string payload;
+                        while (auto x = nextByte()) {
+                            if (x == 1) {
+                                writeCommand("EBTEXT_LOAD_STRING_TO_MEMORY_WITH_SELECT_SCRIPT", payload, Pointer(PointerType.text, nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24)));
+                                break;
+                            } else if (x == 2) {
+                                writeCommand("EBTEXT_LOAD_STRING_TO_MEMORY", payload);
+                                break;
+                            } else {
+                                payload ~= doc.textTable[x];
+                            }
+                        }
                         break;
                     case 0x04:
-                        writeLine("\tEBTEXT_CLEAR_LOADED_STRINGS");
+                        writeCommand("EBTEXT_CLEAR_LOADED_STRINGS");
                         break;
                     case 0x05:
                         auto arg = nextByte();
                         auto statusGroup = nextByte();
                         auto status = nextByte();
-                        writeFormatted!"\tEBTEXT_INFLICT_STATUS PARTY_MEMBER_TEXT::%s, $%02X, $%02X"(commonData.partyMembers[arg+1], statusGroup, status);
+                        writeCommand("EBTEXT_INFLICT_STATUS", Enum(commonData.enums["partyMembersText"], commonData.partyMembers[arg+1]), statusGroup, status);
                         break;
                     case 0x10:
-                        auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_GET_CHARACTER_NUMBER $%02X"(arg);
+                        writeCommand("EBTEXT_GET_CHARACTER_NUMBER", nextByte());
                         break;
                     case 0x11:
-                        auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_GET_CHARACTER_NAME_LETTER $%02X"(arg);
+                        writeCommand("EBTEXT_GET_CHARACTER_NAME_LETTER", nextByte());
                         break;
                     case 0x14:
-                        writeLine("\tEBTEXT_UNKNOWN_CC_19_14");
+                        writeCommand("EBTEXT_UNKNOWN_CC_19_14");
                         break;
                     case 0x16:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_GET_CHARACTER_STATUS $%02X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_GET_CHARACTER_STATUS", arg, arg2);
                         break;
                     case 0x18:
-                        auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_19_18 $%02X"(arg);
+                        writeCommand("EBTEXT_UNKNOWN_CC_19_18", nextByte());
                         break;
                     case 0x19:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_ADD_ITEM_ID_TO_WORK_MEMORY $%02X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_ADD_ITEM_ID_TO_WORK_MEMORY", arg, arg2);
                         break;
                     case 0x1A:
-                        auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_19_1A $%02X"(arg);
+                        writeCommand("EBTEXT_UNKNOWN_CC_19_1A", nextByte());
                         break;
                     case 0x1B:
-                        auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_19_1B $%02X"(arg);
+                        writeCommand("EBTEXT_UNKNOWN_CC_19_1B", nextByte());
                         break;
                     case 0x1C:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_19_1C $%02X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_UNKNOWN_CC_19_1C", arg, arg2);
                         break;
                     case 0x1D:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_19_1D $%02X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_UNKNOWN_CC_19_1D", arg, arg2);
                         break;
                     case 0x1E:
-                        writeLine("\tEBTEXT_UNKNOWN_CC_19_1E");
+                        writeCommand("EBTEXT_UNKNOWN_CC_19_1E");
                         break;
                     case 0x1F:
-                        writeLine("\tEBTEXT_UNKNOWN_CC_19_1F");
+                        writeCommand("EBTEXT_UNKNOWN_CC_19_1F");
                         break;
                     case 0x20:
-                        writeLine("\tEBTEXT_UNKNOWN_CC_19_20");
+                        writeCommand("EBTEXT_UNKNOWN_CC_19_20");
                         break;
                     case 0x21:
-                        auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_IS_ITEM_DRINK $%02X"(arg);
+                        writeCommand("EBTEXT_IS_ITEM_DRINK", nextByte());
                         break;
                     case 0x22:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
                         auto arg3 = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_GET_DIRECTION_OF_OBJECT_FROM_CHARACTER $%02X, $%02X, $%04X"(arg, arg2, arg3);
+                        writeCommand("EBTEXT_GET_DIRECTION_OF_OBJECT_FROM_CHARACTER", arg, arg2, arg3);
                         break;
                     case 0x23:
                         auto arg = nextByte() + (nextByte()<<8);
                         auto arg2 = nextByte() + (nextByte()<<8);
                         auto arg3 = nextByte();
-                        writeFormatted!"\tEBTEXT_GET_DIRECTION_OF_OBJECT_FROM_NPC $%04X, $%04X, $%02X"(arg, arg2, arg3);
+                        writeCommand("EBTEXT_GET_DIRECTION_OF_OBJECT_FROM_NPC", arg, arg2, arg3);
                         break;
                     case 0x24:
                         auto arg = nextByte() + (nextByte()<<8);
                         auto arg2 = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_GET_DIRECTION_OF_OBJECT_FROM_SPRITE $%04X, $%04X"(arg, arg2);
+                        writeCommand("EBTEXT_GET_DIRECTION_OF_OBJECT_FROM_SPRITE", arg, arg2);
                         break;
                     case 0x25:
-                        auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_IS_ITEM_CONDIMENT $%02X"(arg);
+                        writeCommand("EBTEXT_IS_ITEM_CONDIMENT", nextByte());
                         break;
                     case 0x26:
-                        auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_19_26 $%02X"(arg);
+                        writeCommand("EBTEXT_UNKNOWN_CC_19_26", nextByte());
                         break;
                     case 0x27:
-                        auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_19_27 $%02X"(arg);
+                        writeCommand("EBTEXT_UNKNOWN_CC_19_27", nextByte());
                         break;
                     case 0x28:
-                        auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_19_28 $%02X"(arg);
+                        writeCommand("EBTEXT_UNKNOWN_CC_19_28", nextByte());
                         break;
                     default:
-                        writeFormatted!"UNHANDLED: 19 %02X"(subCC);
-                        break;
+                        assert(0, format!"UNHANDLED: 19 %02X"(subCC));
                 }
                 break;
             case 0x1A:
-                flushBuffs();
                 auto subCC = nextByte();
                 switch (subCC) {
                     case 0x01:
@@ -431,669 +473,657 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                         auto dest3 = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
                         auto dest4 = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
                         auto arg5 = nextByte();
-                        writeFormatted!"\tEBTEXT_PARTY_MEMBER_SELECTION_MENU_UNCANCELLABLE $%06X, $%06X, $%06X, $%06X, $%02X"(dest, dest2, dest3, dest4, arg5);
+                        writeCommand("EBTEXT_PARTY_MEMBER_SELECTION_MENU_UNCANCELLABLE", dest, dest2, dest3, dest4, arg5);
                         break;
                     case 0x05:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_SHOW_CHARACTER_INVENTORY $%02X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_SHOW_CHARACTER_INVENTORY", arg, arg2);
                         break;
                     case 0x06:
-                        auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_DISPLAY_SHOP_MENU $%02X"(arg);
+                        writeCommand("EBTEXT_DISPLAY_SHOP_MENU", nextByte());
                         break;
                     case 0x07:
-                        writeLine("\tEBTEXT_UNKNOWN_CC_1A_07");
+                        writeCommand("EBTEXT_UNKNOWN_CC_1A_07");
                         break;
                     case 0x0A:
-                        writeLine("\tEBTEXT_OPEN_PHONE_MENU");
+                        writeCommand("EBTEXT_OPEN_PHONE_MENU");
                         break;
                     default:
-                        writeFormatted!"UNHANDLED: 1A %02X"(subCC);
-                        break;
+                        assert(0, format!"UNHANDLED: 1A %02X"(subCC));
                 }
                 break;
             case 0x1B:
-                flushBuffs();
                 auto subCC = nextByte();
                 switch (subCC) {
                     case 0x00:
-                        writeLine("\tEBTEXT_COPY_ACTIVE_MEMORY_TO_STORAGE");
+                        writeCommand("EBTEXT_COPY_ACTIVE_MEMORY_TO_STORAGE");
                         break;
                     case 0x01:
-                        writeLine("\tEBTEXT_COPY_STORAGE_MEMORY_TO_ACTIVE");
+                        writeCommand("EBTEXT_COPY_STORAGE_MEMORY_TO_ACTIVE");
                         break;
                     case 0x02:
                         auto dest = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                        writeFormatted!"\tEBTEXT_JUMP_IF_FALSE %s"(label(dest));
+                        writeCommand("EBTEXT_JUMP_IF_FALSE", Pointer(PointerType.text, dest));
                         break;
                     case 0x03:
                         auto dest = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                        writeFormatted!"\tEBTEXT_JUMP_IF_TRUE %s"(label(dest));
+                        writeCommand("EBTEXT_JUMP_IF_TRUE", Pointer(PointerType.text, dest));
                         break;
                     case 0x04:
-                        writeLine("\tEBTEXT_SWAP_WORKING_AND_ARG_MEMORY");
+                        writeCommand("EBTEXT_SWAP_WORKING_AND_ARG_MEMORY");
                         break;
                     case 0x05:
-                        writeLine("\tEBTEXT_COPY_ACTIVE_MEMORY_TO_WORKING_MEMORY");
+                        writeCommand("EBTEXT_COPY_ACTIVE_MEMORY_TO_WORKING_MEMORY");
                         break;
                     case 0x06:
-                        writeLine("\tEBTEXT_COPY_WORKING_MEMORY_TO_ACTIVE_MEMORY");
+                        writeCommand("EBTEXT_COPY_WORKING_MEMORY_TO_ACTIVE_MEMORY");
                         break;
                     default:
-                        writeFormatted!"UNHANDLED: 1B %02X"(subCC);
-                        break;
+                        assert(0, format!"UNHANDLED: 1B %02X"(subCC));
                 }
                 break;
             case 0x1C:
-                flushBuffs();
                 auto subCC = nextByte();
                 switch (subCC) {
                     case 0x00:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_TEXT_COLOUR_EFFECTS $%02X"(arg);
+                        writeCommand("EBTEXT_TEXT_COLOUR_EFFECTS", arg);
                         break;
                     case 0x01:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_PRINT_STAT $%02X"(arg);
+                        writeCommand("EBTEXT_PRINT_STAT", arg);
                         break;
                     case 0x02:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_PRINT_CHAR_NAME $%02X"(arg);
+                        writeCommand("EBTEXT_PRINT_CHAR_NAME", arg);
                         break;
                     case 0x03:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_PRINT_CHAR $%02X"(arg);
+                        writeCommand("EBTEXT_PRINT_CHAR", arg);
                         break;
                     case 0x04:
-                        writeLine("\tEBTEXT_OPEN_HP_PP_WINDOWS");
+                        writeCommand("EBTEXT_OPEN_HP_PP_WINDOWS");
                         break;
                     case 0x05:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_PRINT_ITEM_NAME ITEM::%s"(commonData.items[arg]);
+                        writeCommand("EBTEXT_PRINT_ITEM_NAME", Enum(commonData.enums["items"], commonData.items[arg]));
                         break;
                     case 0x06:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_PRINT_TELEPORT_DESTINATION_NAME $%02X"(arg);
+                        writeCommand("EBTEXT_PRINT_TELEPORT_DESTINATION_NAME", arg);
                         break;
                     case 0x07:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_PRINT_HORIZONTAL_TEXT_STRING $%02X"(arg);
+                        writeCommand("EBTEXT_PRINT_HORIZONTAL_TEXT_STRING", arg);
                         break;
                     case 0x08:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_PRINT_SPECIAL_GFX $%02X"(arg);
+                        writeCommand("EBTEXT_PRINT_SPECIAL_GFX", arg);
                         break;
                     case 0x09:
-                        writeLine("\tEBTEXT_UNKNOWN_CC_1C_09");
+                        writeCommand("EBTEXT_UNKNOWN_CC_1C_09");
                         break;
                     case 0x0A:
                         auto arg =nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                        writeFormatted!"\tEBTEXT_PRINT_NUMBER $%08X"(arg);
+                        writeCommand("EBTEXT_PRINT_NUMBER", arg);
                         break;
                     case 0x0B:
                         auto arg =nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                        writeFormatted!"\tEBTEXT_PRINT_MONEY_AMOUNT $%08X"(arg);
+                        writeCommand("EBTEXT_PRINT_MONEY_AMOUNT", arg);
                         break;
                     case 0x0C:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_PRINT_VERTICAL_TEXT_STRING $%02X"(arg);
+                        writeCommand("EBTEXT_PRINT_VERTICAL_TEXT_STRING", arg);
                         break;
                     case 0x0D:
-                        writeLine("\tEBTEXT_PRINT_ACTION_USER_NAME");
+                        writeCommand("EBTEXT_PRINT_ACTION_USER_NAME");
                         break;
                     case 0x0E:
-                        writeLine("\tEBTEXT_PRINT_ACTION_TARGET_NAME");
+                        writeCommand("EBTEXT_PRINT_ACTION_TARGET_NAME");
                         break;
                     case 0x0F:
-                        writeLine("\tEBTEXT_PRINT_ACTION_AMOUNT");
+                        writeCommand("EBTEXT_PRINT_ACTION_AMOUNT");
                         break;
                     case 0x11:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_1C_11 $%02X"(arg);
+                        writeCommand("EBTEXT_UNKNOWN_CC_1C_11", arg);
                         break;
                     case 0x12:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_PRINT_PSI_NAME $%02X"(arg);
+                        writeCommand("EBTEXT_PRINT_PSI_NAME", arg);
                         break;
                     case 0x13:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_DISPLAY_PSI_ANIMATION $%02X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_DISPLAY_PSI_ANIMATION", arg, arg2);
                         break;
                     case 0x14:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_LOAD_SPECIAL $%02X"(arg);
+                        writeCommand("EBTEXT_LOAD_SPECIAL", arg);
                         break;
                     case 0x15:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_LOAD_SPECIAL_FOR_JUMP_MULTI $%02X"(arg);
+                        writeCommand("EBTEXT_LOAD_SPECIAL_FOR_JUMP_MULTI", arg);
                         break;
                     default:
-                        writeFormatted!"UNHANDLED: 1C %02X"(subCC);
-                        break;
+                        assert(0, format!"UNHANDLED: 1C %02X"(subCC));
                 }
                 break;
             case 0x1D:
-                flushBuffs();
                 auto subCC = nextByte();
                 switch (subCC) {
                     case 0x00:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_GIVE_ITEM_TO_CHARACTER $%02X, ITEM::%s"(arg, commonData.items[arg2]);
+                        writeCommand("EBTEXT_GIVE_ITEM_TO_CHARACTER", arg, Enum(commonData.enums["items"], commonData.items[arg2]));
                         break;
                     case 0x01:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_TAKE_ITEM_FROM_CHARACTER $%02X, ITEM::%s"(arg, commonData.items[arg2]);
+                        writeCommand("EBTEXT_TAKE_ITEM_FROM_CHARACTER", arg, Enum(commonData.enums["items"], commonData.items[arg2]));
                         break;
                     case 0x02:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_GET_PLAYER_HAS_INVENTORY_FULL $%02X"(arg);
+                        writeCommand("EBTEXT_GET_PLAYER_HAS_INVENTORY_FULL", arg);
                         break;
                     case 0x03:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_GET_PLAYER_HAS_INVENTORY_ROOM $%02X"(arg);
+                        writeCommand("EBTEXT_GET_PLAYER_HAS_INVENTORY_ROOM", arg);
                         break;
                     case 0x04:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_CHECK_IF_CHARACTER_DOESNT_HAVE_ITEM $%02X, ITEM::%s"(arg, commonData.items[arg2]);
+                        writeCommand("EBTEXT_CHECK_IF_CHARACTER_DOESNT_HAVE_ITEM", arg, Enum(commonData.enums["items"], commonData.items[arg2]));
                         break;
                     case 0x05:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_CHECK_IF_CHARACTER_HAS_ITEM $%02X, ITEM::%s"(arg, commonData.items[arg2]);
+                        writeCommand("EBTEXT_CHECK_IF_CHARACTER_HAS_ITEM", arg, Enum(commonData.enums["items"], commonData.items[arg2]));
                         break;
                     case 0x06:
                         auto arg = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                        writeFormatted!"\tEBTEXT_ADD_TO_ATM $%08X"(arg);
+                        writeCommand("EBTEXT_ADD_TO_ATM", arg);
                         break;
                     case 0x07:
                         auto arg = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                        writeFormatted!"\tEBTEXT_TAKE_FROM_ATM $%08X"(arg);
+                        writeCommand("EBTEXT_TAKE_FROM_ATM", arg);
                         break;
                     case 0x08:
-                        auto arg = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_ADD_TO_WALLET $%04X"(arg);
+                        auto arg = nextShort();
+                        writeCommand("EBTEXT_ADD_TO_WALLET", arg);
                         break;
                     case 0x09:
-                        auto arg = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_TAKE_FROM_WALLET $%04X"(arg);
+                        auto arg = nextShort();
+                        writeCommand("EBTEXT_TAKE_FROM_WALLET", arg);
                         break;
                     case 0x0A:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_GET_BUY_PRICE_OF_ITEM ITEM::%s"(commonData.items[arg]);
+                        writeCommand("EBTEXT_GET_BUY_PRICE_OF_ITEM", Enum(commonData.enums["items"], commonData.items[arg]));
                         break;
                     case 0x0B:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_GET_SELL_PRICE_OF_ITEM ITEM::%s"(commonData.items[arg]);
+                        writeCommand("EBTEXT_GET_SELL_PRICE_OF_ITEM", Enum(commonData.enums["items"], commonData.items[arg]));
                         break;
                     case 0x0C:
-                        auto arg = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_1D_0C $%04X"(arg);
+                        auto arg = nextShort();
+                        writeCommand("EBTEXT_UNKNOWN_CC_1D_0C", arg);
                         break;
                     case 0x0D:
                         auto who = nextByte();
                         auto what = nextByte();
                         auto what2 = nextByte();
-                        writeFormatted!"\tEBTEXT_CHARACTER_HAS_AILMENT $%02X, STATUS_GROUP::%s, $%02X"(who, commonData.statusGroups[what - 1], what2);
+                        writeCommand("EBTEXT_CHARACTER_HAS_AILMENT", who, Enum(commonData.enums["statusGroups"], commonData.statusGroups[what - 1]), what2);
                         break;
                     case 0x0E:
                         auto who = nextByte();
                         auto what = nextByte();
-                        writeFormatted!"\tEBTEXT_GIVE_ITEM_TO_CHARACTER_B $%02X, ITEM::%s"(who, commonData.items[what]);
+                        writeCommand("EBTEXT_GIVE_ITEM_TO_CHARACTER_B", who, Enum(commonData.enums["items"], commonData.items[what]));
                         break;
                     case 0x0F:
-                        auto arg = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_1D_0F $%04X"(arg);
+                        auto arg = nextShort();
+                        writeCommand("EBTEXT_UNKNOWN_CC_1D_0F", arg);
                         break;
                     case 0x10:
-                        auto arg = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_1D_10 $%04X"(arg);
+                        auto arg = nextShort();
+                        writeCommand("EBTEXT_UNKNOWN_CC_1D_10", arg);
                         break;
                     case 0x11:
-                        auto arg = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_1D_11 $%04X"(arg);
+                        auto arg = nextShort();
+                        writeCommand("EBTEXT_UNKNOWN_CC_1D_11", arg);
                         break;
                     case 0x12:
-                        auto arg = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_1D_12 $%04X"(arg);
+                        auto arg = nextShort();
+                        writeCommand("EBTEXT_UNKNOWN_CC_1D_12", arg);
                         break;
                     case 0x13:
-                        auto arg = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_1D_13 $%04X"(arg);
+                        auto arg = nextShort();
+                        writeCommand("EBTEXT_UNKNOWN_CC_1D_13", arg);
                         break;
                     case 0x14:
                         auto dest = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                        writeFormatted!"\tEBTEXT_HAVE_ENOUGH_MONEY $%08X"(dest);
+                        writeCommand("EBTEXT_HAVE_ENOUGH_MONEY", dest);
                         break;
                     case 0x15:
-                        auto arg = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_PUT_VAL_IN_ARGMEM $%02X"(arg);
+                        auto arg = nextShort();
+                        writeCommand("EBTEXT_PUT_VAL_IN_ARGMEM", arg);
                         break;
                     case 0x17:
                         auto dest = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                        writeFormatted!"\tEBTEXT_HAVE_ENOUGH_MONEY_IN_ATM $%08X"(dest);
+                        writeCommand("EBTEXT_HAVE_ENOUGH_MONEY_IN_ATM", dest);
                         break;
                     case 0x18:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_1D_18 $%02X"(arg);
+                        writeCommand("EBTEXT_UNKNOWN_CC_1D_18", arg);
                         break;
                     case 0x19:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_HAVE_X_PARTY_MEMBERS $%02X"(arg);
+                        writeCommand("EBTEXT_HAVE_X_PARTY_MEMBERS", arg);
                         break;
                     case 0x20:
-                        writeLine("\tEBTEXT_TEST_IS_USER_TARGETTING_SELF");
+                        writeCommand("EBTEXT_TEST_IS_USER_TARGETTING_SELF");
                         break;
                     case 0x21:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_GENERATE_RANDOM_NUMBER $%02X"(arg);
+                        writeCommand("EBTEXT_GENERATE_RANDOM_NUMBER", arg);
                         break;
                     case 0x22:
-                        writeLine("\tEBTEXT_TEST_IF_EXIT_MOUSE_USABLE");
+                        writeCommand("EBTEXT_TEST_IF_EXIT_MOUSE_USABLE");
                         break;
                     case 0x23:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_1D_23 $%02X"(arg);
+                        writeCommand("EBTEXT_UNKNOWN_CC_1D_23", arg);
                         break;
                     case 0x24:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_1D_24 $%02X"(arg);
+                        writeCommand("EBTEXT_UNKNOWN_CC_1D_24", arg);
                         break;
                     default:
-                        writeFormatted!"UNHANDLED: 1D %02X"(subCC);
-                        break;
+                        assert(0, format!"UNHANDLED: 1D %02X"(subCC));
                 }
                 break;
             case 0x1E:
-                flushBuffs();
                 auto subCC = nextByte();
                 switch (subCC) {
                     case 0x00:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_RECOVER_HP_PERCENT $%02X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_RECOVER_HP_PERCENT", arg, arg2);
                         break;
                     case 0x01:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_DEPLETE_HP_PERCENT $%02X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_DEPLETE_HP_PERCENT", arg, arg2);
                         break;
                     case 0x02:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_RECOVER_HP_PERCENT $%02X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_RECOVER_HP_PERCENT", arg, arg2);
                         break;
                     case 0x03:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_DEPLETE_HP_AMOUNT $%02X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_DEPLETE_HP_AMOUNT", arg, arg2);
                         break;
                     case 0x04:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_RECOVER_PP_PERCENT $%02X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_RECOVER_PP_PERCENT", arg, arg2);
                         break;
                     case 0x05:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_DEPLETE_PP_PERCENT $%02X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_DEPLETE_PP_PERCENT", arg, arg2);
                         break;
                     case 0x06:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_RECOVER_PP_PERCENT $%02X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_RECOVER_PP_PERCENT", arg, arg2);
                         break;
                     case 0x07:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_DEPLETE_PP_AMOUNT $%02X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_DEPLETE_PP_AMOUNT", arg, arg2);
                         break;
                     case 0x08:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_SET_CHARACTER_LEVEL $%02X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_SET_CHARACTER_LEVEL", arg, arg2);
                         break;
                     case 0x09:
                         auto arg = nextByte();
                         auto arg2 = nextByte() + (nextByte()<<8) + (nextByte()<<16);
-                        writeFormatted!"\tEBTEXT_GIVE_EXPERIENCE $%02X, $%06X"(arg, arg2);
+                        writeCommand("EBTEXT_GIVE_EXPERIENCE", arg, arg2);
                         break;
                     case 0x0A:
                         auto arg = nextByte();
                         auto arg2 = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_BOOST_IQ $%02X, $%04X"(arg, arg2);
+                        writeCommand("EBTEXT_BOOST_IQ", arg, arg2);
                         break;
                     case 0x0B:
                         auto arg = nextByte();
                         auto arg2 = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_BOOST_GUTS $%02X, $%04X"(arg, arg2);
+                        writeCommand("EBTEXT_BOOST_GUTS", arg, arg2);
                         break;
                     case 0x0C:
                         auto arg = nextByte();
                         auto arg2 = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_BOOST_SPEED $%02X, $%04X"(arg, arg2);
+                        writeCommand("EBTEXT_BOOST_SPEED", arg, arg2);
                         break;
                     case 0x0D:
                         auto arg = nextByte();
                         auto arg2 = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_BOOST_VITALITY $%02X, $%04X"(arg, arg2);
+                        writeCommand("EBTEXT_BOOST_VITALITY", arg, arg2);
                         break;
                     case 0x0E:
                         auto arg = nextByte();
                         auto arg2 = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_BOOST_LUCK $%02X, $%04X"(arg, arg2);
+                        writeCommand("EBTEXT_BOOST_LUCK", arg, arg2);
                         break;
                     default:
-                        writeFormatted!"UNHANDLED: 1E %02X"(subCC);
-                        break;
+                        assert(0, format!"UNHANDLED: 1E %02X"(subCC));
                 }
                 break;
             case 0x1F:
-                flushBuffs();
                 auto subCC = nextByte();
                 switch (subCC) {
                     case 0x00:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_PLAY_MUSIC $%02X, MUSIC::%s"(arg, commonData.musicTracks[arg2]);
+                        writeCommand("EBTEXT_PLAY_MUSIC", arg, Enum(commonData.enums["musicTracks"], commonData.musicTracks[arg2]));
                         break;
                     case 0x01:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_1F_01 $%02X"(arg);
+                        writeCommand("EBTEXT_UNKNOWN_CC_1F_01", arg);
                         break;
                     case 0x02:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_PLAY_SOUND SFX::%s"(commonData.sfx[arg]);
+                        writeCommand("EBTEXT_PLAY_SOUND", Enum(commonData.enums["sfx"], commonData.sfx[arg]));
                         break;
                     case 0x03:
-                        writeLine("\tEBTEXT_RESTORE_DEFAULT_MUSIC");
+                        writeCommand("EBTEXT_RESTORE_DEFAULT_MUSIC");
                         break;
                     case 0x04:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_SET_TEXT_PRINTING_SOUND $%02X"(arg);
+                        writeCommand("EBTEXT_SET_TEXT_PRINTING_SOUND", arg);
                         break;
                     case 0x05:
-                        writeLine("\tEBTEXT_DISABLE_SECTOR_MUSIC_CHANGE");
+                        writeCommand("EBTEXT_DISABLE_SECTOR_MUSIC_CHANGE");
                         break;
                     case 0x06:
-                        writeLine("\tEBTEXT_ENABLE_SECTOR_MUSIC_CHANGE");
+                        writeCommand("EBTEXT_ENABLE_SECTOR_MUSIC_CHANGE");
                         break;
                     case 0x07:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_APPLY_MUSIC_EFFECT $%02X"(arg);
+                        writeCommand("EBTEXT_APPLY_MUSIC_EFFECT", arg);
                         break;
                     case 0x11:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_ADD_PARTY_MEMBER PARTY_MEMBER::%s"(commonData.partyMembers[arg]);
+                        writeCommand("EBTEXT_ADD_PARTY_MEMBER", Enum(commonData.enums["partyMembers"], commonData.partyMembers[arg]));
                         break;
                     case 0x12:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_REMOVE_PARTY_MEMBER PARTY_MEMBER::%s"(commonData.partyMembers[arg]);
+                        writeCommand("EBTEXT_REMOVE_PARTY_MEMBER", Enum(commonData.enums["partyMembers"], commonData.partyMembers[arg]));
                         break;
                     case 0x13:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_CHANGE_CHARACTER_DIRECTION $%02X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_CHANGE_CHARACTER_DIRECTION", arg, arg2);
                         break;
                     case 0x14:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_CHANGE_PARTY_DIRECTION $%02X"(arg);
+                        writeCommand("EBTEXT_CHANGE_PARTY_DIRECTION", arg);
                         break;
                     case 0x15:
                         auto arg = nextByte() + (nextByte()<<8);
                         auto arg2 = nextByte() + (nextByte()<<8);
                         auto arg3 = nextByte();
-                        writeFormatted!"\tEBTEXT_GENERATE_ACTIVE_SPRITE OVERWORLD_SPRITE::%s, EVENT_SCRIPT::%s, $%02X"(commonData.sprites[arg], commonData.movements[arg2], arg3);
+                        writeCommand("EBTEXT_GENERATE_ACTIVE_SPRITE", Enum(commonData.enums["sprites"], commonData.sprites[arg]), Enum(commonData.enums["movements"], commonData.movements[arg2]), arg3);
                         break;
                     case 0x16:
                         auto arg = nextByte() + (nextByte()<<8);
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_CHANGE_TPT_ENTRY_DIRECTION $%04X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_CHANGE_TPT_ENTRY_DIRECTION", arg, arg2);
                         break;
                     case 0x17:
                         auto arg = nextByte() + (nextByte()<<8);
                         auto arg2 = nextByte() + (nextByte()<<8);
                         auto arg3 = nextByte();
-                        writeFormatted!"\tEBTEXT_CREATE_ENTITY $%04X, EVENT_SCRIPT::%s, $%02X"(arg, commonData.movements[arg2], arg3);
+                        writeCommand("EBTEXT_CREATE_ENTITY", arg, Enum(commonData.enums["movements"], commonData.movements[arg2]), arg3);
                         break;
                     case 0x1A:
                         auto arg = nextByte() + (nextByte()<<8);
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_CREATE_FLOATING_SPRITE_NEAR_TPT_ENTRY $%04X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_CREATE_FLOATING_SPRITE_NEAR_TPT_ENTRY", arg, arg2);
                         break;
                     case 0x1B:
                         auto arg = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_DELETE_FLOATING_SPRITE_NEAR_TPT_ENTRY $%04X"(arg);
+                        writeCommand("EBTEXT_DELETE_FLOATING_SPRITE_NEAR_TPT_ENTRY", arg);
                         break;
                     case 0x1C:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_CREATE_FLOATING_SPRITE_NEAR_CHARACTER $%02X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_CREATE_FLOATING_SPRITE_NEAR_CHARACTER", arg, arg2);
                         break;
                     case 0x1D:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_DELETE_FLOATING_SPRITE_NEAR_CHARACTER $%02X"(arg);
+                        writeCommand("EBTEXT_DELETE_FLOATING_SPRITE_NEAR_CHARACTER", arg);
                         break;
                     case 0x1E:
                         auto arg = nextByte() + (nextByte()<<8);
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_DELETE_TPT_INSTANCE $%04X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_DELETE_TPT_INSTANCE", arg, arg2);
                         break;
                     case 0x1F:
                         auto arg = nextByte() + (nextByte()<<8);
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_DELETE_GENERATED_SPRITE OVERWORLD_SPRITE::%s, $%02X"(commonData.sprites[arg], arg2);
+                        writeCommand("EBTEXT_DELETE_GENERATED_SPRITE", Enum(commonData.enums["sprites"], commonData.sprites[arg]), arg2);
                         break;
                     case 0x20:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_TRIGGER_PSI_TELEPORT $%02X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_TRIGGER_PSI_TELEPORT", arg, arg2);
                         break;
                     case 0x21:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_TELEPORT_TO $%02X"(arg);
+                        writeCommand("EBTEXT_TELEPORT_TO", arg);
                         break;
                     case 0x23:
                         auto arg = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_TRIGGER_BATTLE ENEMY_GROUP::%s"(commonData.enemyGroups[arg]);
+                        writeCommand("EBTEXT_TRIGGER_BATTLE", Enum(commonData.enums["enemyGroups"], commonData.enemyGroups[arg]));
                         break;
                     case 0x30:
-                        writeLine("\tEBTEXT_USE_NORMAL_FONT");
+                        writeCommand("EBTEXT_USE_NORMAL_FONT");
                         break;
                     case 0x31:
-                        writeLine("\tEBTEXT_USE_MR_SATURN_FONT");
+                        writeCommand("EBTEXT_USE_MR_SATURN_FONT");
                         break;
                     case 0x41:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_TRIGGER_EVENT $%02X"(arg);
+                        writeCommand("EBTEXT_TRIGGER_EVENT", arg);
                         break;
                     case 0x50:
-                        writeLine("\tEBTEXT_DISABLE_CONTROLLER_INPUT");
+                        writeCommand("EBTEXT_DISABLE_CONTROLLER_INPUT");
                         break;
                     case 0x51:
-                        writeLine("\tEBTEXT_ENABLE_CONTROLLER_INPUT");
+                        writeCommand("EBTEXT_ENABLE_CONTROLLER_INPUT");
                         break;
                     case 0x52:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_CREATE_NUMBER_SELECTOR $%02X"(arg);
+                        writeCommand("EBTEXT_CREATE_NUMBER_SELECTOR", arg);
                         break;
                     case 0x60:
-                        writeLine("\t.BYTE $1F, $60");
+                        writeCommand(".BYTE $1F, $60");
                         break;
                     case 0x61:
-                        writeLine("\tEBTEXT_TRIGGER_MOVEMENT_CODE");
+                        writeCommand("EBTEXT_TRIGGER_MOVEMENT_CODE");
                         break;
                     case 0x62:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_1F_62 $%02X"(arg);
+                        writeCommand("EBTEXT_UNKNOWN_CC_1F_62", arg);
                         break;
                     case 0x63:
                         auto arg = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                        writeFormatted!"\tEBTEXT_SCREEN_RELOAD_PTR %s"(label(arg));
+                        writeCommand("EBTEXT_SCREEN_RELOAD_PTR", Pointer(PointerType.text, arg));
                         break;
                     case 0x64:
-                        writeLine("\tEBTEXT_DELETE_ALL_NPCS");
+                        writeCommand("EBTEXT_DELETE_ALL_NPCS");
                         break;
                     case 0x65:
-                        writeLine("\tEBTEXT_DELETE_FIRST_NPC");
+                        writeCommand("EBTEXT_DELETE_FIRST_NPC");
                         break;
                     case 0x66:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
                         auto arg3 = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                        writeFormatted!"\tEBTEXT_ACTIVATE_HOTSPOT $%02X, $%02X, %s"(arg, arg2, label(arg3));
+                        writeCommand("EBTEXT_ACTIVATE_HOTSPOT", arg, arg2, Pointer(PointerType.text, arg3));
                         break;
                     case 0x67:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_DEACTIVATE_HOTSPOT $%02X"(arg);
+                        writeCommand("EBTEXT_DEACTIVATE_HOTSPOT", arg);
                         break;
                     case 0x68:
-                        writeLine("\tEBTEXT_STORE_COORDINATES_TO_MEMORY");
+                        writeCommand("EBTEXT_STORE_COORDINATES_TO_MEMORY");
                         break;
                     case 0x69:
-                        writeLine("\tEBTEXT_TELEPORT_TO_STORED_COORDINATES");
+                        writeCommand("EBTEXT_TELEPORT_TO_STORED_COORDINATES");
                         break;
                     case 0x71:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_REALIZE_PSI $%02X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_REALIZE_PSI", arg, arg2);
                         break;
                     case 0x83:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_EQUIP_ITEM_TO_CHARACTER $%02X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_EQUIP_ITEM_TO_CHARACTER", arg, arg2);
                         break;
                     case 0xA0:
-                        writeLine("\tEBTEXT_SET_TPT_DIRECTION_UP");
+                        writeCommand("EBTEXT_SET_TPT_DIRECTION_UP");
                         break;
                     case 0xA1:
-                        writeLine("\tEBTEXT_SET_TPT_DIRECTION_DOWN");
+                        writeCommand("EBTEXT_SET_TPT_DIRECTION_DOWN");
                         break;
                     case 0xA2:
-                        writeLine("\tEBTEXT_UNKNOWN_CC_1F_A2");
+                        writeCommand("EBTEXT_UNKNOWN_CC_1F_A2");
                         break;
                     case 0xB0:
-                        writeLine("\tEBTEXT_SAVE_GAME");
+                        writeCommand("EBTEXT_SAVE_GAME");
                         break;
                     case 0xC0:
-                        flushBuffs();
                         auto argCount = nextByte();
-                        string[] dests;
+                        Pointer[] dests;
                         while(argCount--) {
-                            dests ~= label(nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24));
+                            dests ~= Pointer(PointerType.text, nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24));
                         }
-                        writeFormatted!"\tEBTEXT_JUMP_MULTI2 %-(%s%|, %)"(dests);
+                        writeCommand("EBTEXT_JUMP_MULTI2", dests);
                         break;
                     case 0xD0:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_TRY_FIX_ITEM %s"(arg);
+                        writeCommand("EBTEXT_TRY_FIX_ITEM", arg);
                         break;
                     case 0xD1:
-                        writeLine("\tEBTEXT_GET_DIRECTION_OF_NEARBY_TRUFFLE");
+                        writeCommand("EBTEXT_GET_DIRECTION_OF_NEARBY_TRUFFLE");
                         break;
                     case 0xD2:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_SUMMON_WANDERING_PHOTOGRAPHER $%02X"(arg);
+                        writeCommand("EBTEXT_SUMMON_WANDERING_PHOTOGRAPHER", arg);
                         break;
                     case 0xD3:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_TRIGGER_TIMED_EVENT $%02X"(arg);
+                        writeCommand("EBTEXT_TRIGGER_TIMED_EVENT", arg);
                         break;
                     case 0xE1:
                         auto arg = nextByte() + (nextByte()<<8);
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_CHANGE_MAP_PALETTE $%04X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_CHANGE_MAP_PALETTE", arg, arg2);
                         break;
                     case 0xE4:
                         auto arg = nextByte() + (nextByte()<<8);
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_CHANGE_GENERATED_SPRITE_DIRECTION $%04X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_CHANGE_GENERATED_SPRITE_DIRECTION", arg, arg2);
                         break;
                     case 0xE5:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_SET_PLAYER_LOCK $%02X"(arg);
+                        writeCommand("EBTEXT_SET_PLAYER_LOCK", arg);
                         break;
                     case 0xE6:
                         auto arg = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_DELAY_TPT_APPEARANCE $%04X"(arg);
+                        writeCommand("EBTEXT_DELAY_TPT_APPEARANCE", arg);
                         break;
                     case 0xE7:
                         auto arg = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_1F_E7 $%04X"(arg);
+                        writeCommand("EBTEXT_UNKNOWN_CC_1F_E7", arg);
                         break;
                     case 0xE8:
                         auto arg = nextByte();
-                        writeFormatted!"\tEBTEXT_RESTRICT_PLAYER_MOVEMENT_WHEN_CAMERA_REPOSITIONED $%02X"(arg);
+                        writeCommand("EBTEXT_RESTRICT_PLAYER_MOVEMENT_WHEN_CAMERA_REPOSITIONED", arg);
                         break;
                     case 0xE9:
                         auto arg = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_1F_E9 $%04X"(arg);
+                        writeCommand("EBTEXT_UNKNOWN_CC_1F_E9", arg);
                         break;
                     case 0xEA:
                         auto arg = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_1F_EA $%04X"(arg);
+                        writeCommand("EBTEXT_UNKNOWN_CC_1F_EA", arg);
                         break;
                     case 0xEB:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_MAKE_INVISIBLE $%02X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_MAKE_INVISIBLE", arg, arg2);
                         break;
                     case 0xEC:
                         auto arg = nextByte();
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_MAKE_VISIBLE $%02X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_MAKE_VISIBLE", arg, arg2);
                         break;
                     case 0xED:
-                        writeLine("\tEBTEXT_RESTORE_MOVEMENT");
+                        writeCommand("EBTEXT_RESTORE_MOVEMENT");
                         break;
                     case 0xEE:
                         auto arg = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_WARP_PARTY_TO_TPT_ENTRY $%04X"(arg);
+                        writeCommand("EBTEXT_WARP_PARTY_TO_TPT_ENTRY", arg);
                         break;
                     case 0xEF:
                         auto arg = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_1F_EF $%04X"(arg);
+                        writeCommand("EBTEXT_UNKNOWN_CC_1F_EF", arg);
                         break;
                     case 0xF0:
-                        writeLine("\tEBTEXT_RIDE_BICYCLE");
+                        writeCommand("EBTEXT_RIDE_BICYCLE");
                         break;
                     case 0xF1:
                         auto arg = nextByte() + (nextByte()<<8);
                         auto arg2 = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_SET_TPT_MOVEMENT_CODE $%04X, EVENT_SCRIPT::%s"(arg, commonData.movements[arg2]);
+                        writeCommand("EBTEXT_SET_TPT_MOVEMENT_CODE", arg, Enum(commonData.enums["movements"], commonData.movements[arg2]));
                         break;
                     case 0xF2:
                         auto arg = nextByte() + (nextByte()<<8);
                         auto arg2 = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_SET_SPRITE_MOVEMENT_CODE OVERWORLD_SPRITE::%s, EVENT_SCRIPT::%s"(commonData.sprites[arg], commonData.movements[arg2]);
+                        writeCommand("EBTEXT_SET_SPRITE_MOVEMENT_CODE", Enum(commonData.enums["sprites"], commonData.sprites[arg]), Enum(commonData.enums["movements"], commonData.movements[arg2]));
                         break;
                     case 0xF3:
                         auto arg = nextByte() + (nextByte()<<8);
                         auto arg2 = nextByte();
-                        writeFormatted!"\tEBTEXT_CREATE_FLOATING_SPRITE_NEAR_ENTITY $%04X, $%02X"(arg, arg2);
+                        writeCommand("EBTEXT_CREATE_FLOATING_SPRITE_NEAR_ENTITY", arg, arg2);
                         break;
                     case 0xF4:
                         auto arg = nextByte() + (nextByte()<<8);
-                        writeFormatted!"\tEBTEXT_DELETE_FLOATING_SPRITE_NEAR_ENTITY $%04X"(arg);
+                        writeCommand("EBTEXT_DELETE_FLOATING_SPRITE_NEAR_ENTITY", arg);
                         break;
                     default:
-                        writeFormatted!"UNHANDLED: 1F %02X"(subCC);
-                        break;
+                        assert(0, format!"UNHANDLED: 1F %02X"(subCC));
                 }
                 break;
             default:
-                flushBuffs();
-                writeFormatted!"\t.BYTE $%02X"(first);
-                break;
+                assert(0, format!"\t.BYTE $%02X"(first));
         }
     }
-    if (jpText) {
-        return [filename, symbolFilename];
-    } else {
-        return [filename, uncompressedFilename, symbolFilename];
+    string[] outFiles = [filename];
+    if (compressedOutput) {
+        outFiles ~= uncompressedFilename;
     }
+    if (!doc.d) {
+        outFiles ~= symbolFilename;
+    }
+    return outFiles;
 }

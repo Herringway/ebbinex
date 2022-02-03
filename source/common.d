@@ -4,6 +4,7 @@ import std.array;
 
 struct DumpDoc {
     uint[] forceTextLabels;
+    uint[] forceLocalLabels;
     DumpInfo[] dumpEntries;
     string[ubyte] textTable;
     string[ubyte] staffTextTable;
@@ -15,6 +16,7 @@ struct DumpDoc {
     string romIdentifier;
     bool dontUseTextTable;
     bool multibyteFlyovers;
+    bool d;
     bool supportsCompressedText() const @safe pure {
         return compressedTextStrings.length > 0;
     }
@@ -35,6 +37,7 @@ struct CommonData {
     string[] enemyTypes;
     string[] itemFlags;
     string[] enemyGroups;
+    string[string] enums;
 }
 
 ubyte[] readFile(string filename) {
