@@ -14,10 +14,12 @@ import siryul;
 int main(string[] args) {
     string dumpPathOverride = "";
     bool decomp;
+    bool clearData;
     string commonDataPath = "commondefs.yml";
     auto helpInfo = getopt(args,
         "decompress|z", "Decompress compressed data", &decomp,
         "commondata|c", "Path to common data definitions", &commonDataPath,
+        "clear|x", "Clear temp data", &clearData,
         "dumpPath|d", "Override defined dump path", &dumpPathOverride,
     );
 	if ((args.length < 3) || helpInfo.helpWanted) {
@@ -45,7 +47,7 @@ int main(string[] args) {
     }
     writeln();
 	foreach (entry; docFile.dumpEntries) {
-        dumpData(docFile, commonData, rom, entry, (dumpPathOverride != "") ? dumpPathOverride : docFile.defaultDumpPath, decomp);
+        dumpData(docFile, commonData, rom, entry, (dumpPathOverride != "") ? dumpPathOverride : docFile.defaultDumpPath, decomp, clearData);
     }
     return 0;
 }
@@ -68,7 +70,7 @@ auto detect(const ubyte[] data, string identifier) @safe pure {
     return Result(false, false);
 }
 
-void dumpData(const DumpDoc doc, const CommonData commonData, ubyte[] source, const DumpInfo info, string outPath, bool decompress) {
+void dumpData(const DumpDoc doc, const CommonData commonData, ubyte[] source, const DumpInfo info, string outPath, bool decompress, bool clear) {
     import std.conv : text;
     import std.exception : enforce;
     assert(source.length == 0x300000, "ROM size too small: Got "~source.length.text);
@@ -83,7 +85,11 @@ void dumpData(const DumpDoc doc, const CommonData commonData, ubyte[] source, co
     auto path = buildPath(outDir, info.name);
 
     string temporary = buildPath(tempDir, "ebbinex");
-    enforce(!temporary.exists, "Temp folder already exists?");
+    if (clear && temporary.exists) {
+        rmdirRecurse(temporary);
+    } else {
+        enforce(!temporary.exists, "Temp folder already exists?");
+    }
     mkdir(temporary);
 
     string[] files;
