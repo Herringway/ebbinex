@@ -28,16 +28,13 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
     const compressedOutput = !jpText && !doc.d;
     auto filename = setExtension(baseName, doc.d ? "d" : "ebtxt");
     auto uncompressedFilename = setExtension(baseName, "ebtxt.uncompressed");
-    auto symbolFilename = setExtension(baseName, "symbols.asm");
+    auto symbolFilename = setExtension(baseName, doc.d ? "decs.d" : "symbols.asm");
     auto outFile = File(buildPath(dir, filename), "w");
     File outFileC;
     if (!jpText) {
         outFileC = File(buildPath(dir, uncompressedFilename), "w");
      }
-    File symbolFile;
-    if (!doc.d) {
-        symbolFile = File(buildPath(dir, symbolFilename), "w");
-    }
+    File symbolFile = File(buildPath(dir, symbolFilename), "w");
     void writeFormatted(string fmt, T...)(T args) {
         outFile.writefln!fmt(args);
         if (compressedOutput) {
@@ -58,7 +55,7 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
     string tmpCompbuff;
     bool labelPrinted;
     string label(const ulong addr) {
-        return addr in doc.renameLabels ? doc.renameLabels[addr] : format!"TEXT_BLOCK_%06X"(addr);
+        return addr in doc.renameLabels ? doc.renameLabels[addr] : format!"%s%06X"(doc.d ? "TextBlock" : "TEXT_BLOCK_", addr);
     }
     auto nextByte() {
         labelPrinted = false;
@@ -90,7 +87,11 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
             if (!doc.d) {
                 file.write(label(arg.val));
             } else {
-                file.write("&", label(arg.val));
+                if (arg.val == 0) {
+                    file.write("null");
+                } else {
+                    file.write(label(arg.val), ".ptr");
+                }
             }
         } else static if (is(T == Pointer[])) {
             foreach (i, v; arg) {
@@ -171,6 +172,7 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
         }
     }
     uint localID = 0;
+    bool firstLine = true;
     void printLabel() {
         if (labelPrinted || source.empty) {
             return;
@@ -182,9 +184,14 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
             writeLine();
             writeFormatted!"%s: ;$%06X"(labelstr, offset);
         } else {
-            writeLine("];");
+            if (!firstLine) {
+                writeLine("].join();");
+            }
             writeLine("");
-            writeFormatted!"immutable ubyte[] %s = [ //$%06X"(labelstr, offset);
+            size_t size = 0;
+            symbolFile.writefln!"immutable ubyte[%s] %s; //$%06X"(size, labelstr, offset);
+            writeFormatted!"%s = [ //$%06X"(labelstr, offset);
+            firstLine = false;
         }
         labelPrinted = true;
         localID = 0;
@@ -379,7 +386,7 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                         auto arg = nextByte();
                         auto statusGroup = nextByte();
                         auto status = nextByte();
-                        writeCommand("EBTEXT_INFLICT_STATUS", Enum(commonData.enums["partyMembersText"], commonData.partyMembers[arg+1]), statusGroup, status);
+                        writeCommand("EBTEXT_INFLICT_STATUS", Enum(commonData.enums["partyMembers"], commonData.partyMembers[arg]), statusGroup, status);
                         break;
                     case 0x10:
                         writeCommand("EBTEXT_GET_CHARACTER_NUMBER", nextByte());
@@ -473,7 +480,7 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                         auto dest3 = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
                         auto dest4 = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
                         auto arg5 = nextByte();
-                        writeCommand("EBTEXT_PARTY_MEMBER_SELECTION_MENU_UNCANCELLABLE", dest, dest2, dest3, dest4, arg5);
+                        writeCommand("EBTEXT_PARTY_MEMBER_SELECTION_MENU_UNCANCELLABLE", Pointer(PointerType.text, dest), Pointer(PointerType.text, dest2), Pointer(PointerType.text, dest3), Pointer(PointerType.text, dest4), arg5);
                         break;
                     case 0x05:
                         auto arg = nextByte();
@@ -1086,7 +1093,7 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                         break;
                     case 0xEF:
                         auto arg = nextByte() + (nextByte()<<8);
-                        writeCommand("EBTEXT_UNKNOWN_CC_1F_EF", arg);
+                        writeCommand("EBTEXT_UNKNOWN_CC_1F_EF", Enum(commonData.enums["sprites"], commonData.sprites[arg]));
                         break;
                     case 0xF0:
                         writeCommand("EBTEXT_RIDE_BICYCLE");
@@ -1118,12 +1125,13 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                 assert(0, format!"\t.BYTE $%02X"(first));
         }
     }
+    if (doc.d) {
+        writeLine("].join();");
+    }
     string[] outFiles = [filename];
     if (compressedOutput) {
         outFiles ~= uncompressedFilename;
     }
-    if (!doc.d) {
-        outFiles ~= symbolFilename;
-    }
+    outFiles ~= symbolFilename;
     return outFiles;
 }
