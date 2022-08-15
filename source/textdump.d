@@ -316,7 +316,17 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                 auto subCC = nextByte();
                 switch (subCC) {
                     case 0x02:
-                        writeLine("\tEBTEXT_LOAD_STRING_TO_MEMORY");
+                        // Gather text
+                        string memString = [];
+                        auto next = nextByte();
+                        while (next in doc.textTable) {
+                            memString ~= doc.textTable[next];
+                            next = nextByte();
+                        }
+                        // The first invalid character should be 0x02, which signals the end
+                        // (We can discard it, since the LOAD_STRING_TO_MEMORY macro adds it)
+                        assert(next == 0x02, "LOAD_STRING_TO_MEMORY should end in 02");
+                        writeFormatted!"\tEBTEXT_LOAD_STRING_TO_MEMORY \"%s\""(memString);
                         break;
                     case 0x04:
                         writeLine("\tEBTEXT_CLEAR_LOADED_STRINGS");
