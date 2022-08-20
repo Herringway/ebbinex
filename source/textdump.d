@@ -104,7 +104,7 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
             return;
         }
         if (jpText) {
-            outFile.writefln!"\t.BYTE %($%02X, %) ;\"%s\""(raw, tmpbuff);
+            outFile.writefln!"\t.BYTE \"%(\\x%02X%)\" ;\"%s\""(raw, tmpbuff);
         } else {
             outFile.writefln!"\tEBTEXT \"%s\""(tmpbuff);
         }
@@ -316,7 +316,32 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
                 auto subCC = nextByte();
                 switch (subCC) {
                     case 0x02:
-                        writeLine("\tEBTEXT_LOAD_STRING_TO_MEMORY");
+                        string payload;
+                        string jpTextBuffer;
+                        while (auto x = nextByte()) {
+                            if (x == 1) {
+                                if (jpText) {
+                                    writeFormatted!"\tEBTEXT_LOAD_STRING_TO_MEMORY_WITH_SELECT_SCRIPT \"%s\", %s ; \"%s\""(payload, label(nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24)), jpTextBuffer);
+                                } else {
+                                    writeFormatted!"\tEBTEXT_LOAD_STRING_TO_MEMORY_WITH_SELECT_SCRIPT \"%s\", %s"(payload, label(nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24)));
+                                }
+                                break;
+                            } else if (x == 2) {
+                                if (jpText) {
+                                    writeFormatted!"\tEBTEXT_LOAD_STRING_TO_MEMORY \"%s\" ; \"%s\""(payload, jpTextBuffer);
+                                } else {
+                                    writeFormatted!"\tEBTEXT_LOAD_STRING_TO_MEMORY \"%s\""(payload);
+                                }
+                                break;
+                            } else {
+                                if (jpText) {
+                                    payload ~= format!"\\x%02X"(x);
+                                    jpTextBuffer ~= doc.textTable[x];
+                                } else {
+                                    payload ~= doc.textTable[x];
+                                }
+                            }
+                        }
                         break;
                     case 0x04:
                         writeLine("\tEBTEXT_CLEAR_LOADED_STRINGS");
