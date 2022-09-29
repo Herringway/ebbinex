@@ -121,6 +121,9 @@ void dumpData(const DumpDoc doc, const CommonData commonData, ubyte[] source, co
         case "stafftext":
             files = writeFile!parseStaffText(temporary, info.name, info.extension, data, offset, doc, commonData);
             break;
+        case "nspc":
+            files = parseNSPC(temporary, info.name, info.extension, data, offset, doc, commonData, source);
+            break;
         default:
             if (info.compressed) {
                 files ~= writeFile!writeRaw(temporary, info.name, info.extension ~ ".lzhal", data, offset, doc, commonData);
@@ -831,4 +834,61 @@ string[] parseStaffText(string dir, string baseName, string extension, ubyte[] s
         }
     }
     return [filename];
+}
+
+string[] parseNSPC(string dir, string baseName, string extension, ubyte[] source, ulong offset, const DumpDoc doc, const CommonData commonData, const ubyte[] fullData) {
+    import std.array : empty, front, popFront;
+    string[] files;
+    const packTable = cast(PackPointer[])(fullData[doc.music.packPointerTable .. doc.music.packPointerTable + doc.music.numPacks * PackPointer.sizeof]);
+    const bgmPacks = cast(ubyte[3][])source;
+    const songPointers = cast(ushort[])fullData[doc.music.songPointerTable .. doc.music.songPointerTable + ushort.sizeof * bgmPacks.length];
+    foreach (idx, songPacks; bgmPacks) {
+        const filename = format!"%03d.nspc"(idx + 1);
+        files ~= filename;
+        auto file = File(buildPath(dir, filename), "w");
+        void writePack(ubyte pack) {
+            size_t offset = packTable[pack].full - 0xC00000;
+            while(true) {
+                auto size = (cast(ushort[])(fullData[offset .. offset + 2]))[0];
+                if (size == 0) {
+                    break;
+                }
+                auto spcOffset = (cast(ushort[])(fullData[offset + 2 .. offset + 4]))[0];
+                file.rawWrite(fullData[offset .. offset + size + 4]);
+                offset += size + 4;
+            }
+        }
+        NSPCFileHeader header;
+        header.songBase = songPointers[idx];
+        header.instrumentBase = 0x6E00;
+        header.sampleBase = 0x6C00;
+        file.rawWrite([header]);
+        if (songPacks[2] == 0xFF) {
+            writePack(1);
+        }
+        foreach (pack; songPacks) {
+            if (pack == 0xFF) {
+                continue;
+            }
+            writePack(pack);
+        }
+    }
+    return files;
+}
+align(1) struct PackPointer {
+    align(1):
+    ubyte bank;
+    ushort addr;
+    uint full() const {
+        return addr + ((cast(uint)bank) << 16);
+    }
+}
+
+struct NSPCFileHeader {
+    align(1):
+    uint variant;
+    ushort songBase;
+    ushort instrumentBase;
+    ushort sampleBase;
+    ubyte[22] reserved;
 }

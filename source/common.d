@@ -16,6 +16,7 @@ struct DumpDoc {
     bool dontUseTextTable;
     bool multibyteFlyovers;
     bool d;
+    Music music;
     bool supportsCompressedText() const @safe pure {
         return compressedTextStrings.length > 0;
     }
@@ -50,4 +51,10 @@ struct DumpInfo {
     ulong size;
     string extension = "bin";
     bool compressed;
+}
+
+struct Music {
+    uint packPointerTable;
+    uint songPointerTable;
+    uint numPacks;
 }
