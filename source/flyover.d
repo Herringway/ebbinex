@@ -15,7 +15,7 @@ string[] parseFlyover(string dir, string baseName, string extension, ubyte[] sou
     auto outFile = File(buildPath(dir, filename), "w");
     File symbolFile;
     if (!doc.d) {
-        File(buildPath(dir, symbolFilename), "w");
+        symbolFile = File(buildPath(dir, symbolFilename), "w");
         outFile.writefln!".INCLUDE \"%s\"\n"(setExtension(baseName.baseName, "symbols.asm"));
     }
     string tmpbuff;
