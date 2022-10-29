@@ -1,3 +1,4 @@
+import std.algorithm.comparison;
 import std.file;
 import std.path;
 import std.stdio;
@@ -7,6 +8,7 @@ import std.range;
 import std.getopt;
 
 import common;
+import dumpimage;
 import flyover;
 import textdump;
 import siryul;
@@ -120,6 +122,9 @@ void dumpData(const DumpDoc doc, const CommonData commonData, ubyte[] source, co
             break;
         case "stafftext":
             files = writeFile!parseStaffText(temporary, info.name, info.extension, data, offset, doc, commonData);
+            break;
+        case "bspr":
+            files = dumpBattleSprites(temporary, info.name, info.extension, data, offset, doc, commonData, source);
             break;
         case "nspc":
             files = parseNSPC(temporary, info.name, info.extension, data, offset, doc, commonData, source);

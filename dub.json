@@ -8,6 +8,7 @@
 	"license": "proprietary",
 	"dependencies": {
 		"compy": { "version": "~>1.1", "optional": true},
-		"siryul": "~>0.6"
+		"siryul": "~>0.6",
+		"tiledump:dumper": "*"
 	}
 }
