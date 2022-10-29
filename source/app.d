@@ -877,6 +877,7 @@ string[] parseNSPC(string dir, string baseName, string extension, ubyte[] source
             }
             writePack(pack);
         }
+        file.rawWrite(cast(ushort[])[0]);
     }
     return files;
 }
