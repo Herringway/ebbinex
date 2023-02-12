@@ -14,6 +14,7 @@ import textdump;
 import siryul;
 
 int main(string[] args) {
+    import std.exception : enforce;
     string dumpPathOverride = "";
     bool decomp;
     bool clearData;
@@ -48,8 +49,16 @@ int main(string[] args) {
         write(" (with 512 byte header)");
     }
     writeln();
+    string temporary = buildPath(tempDir, "ebbinex");
+    if (clearData && temporary.exists) {
+        rmdirRecurse(temporary);
+    } else {
+        enforce(!temporary.exists, "Temp folder already exists?");
+    }
+    mkdir(temporary);
+    scope(exit) rmdirRecurse(temporary);
 	foreach (entry; docFile.dumpEntries) {
-        dumpData(docFile, commonData, rom, entry, (dumpPathOverride != "") ? dumpPathOverride : docFile.defaultDumpPath, decomp, clearData);
+        dumpData(docFile, commonData, rom, entry, (dumpPathOverride != "") ? dumpPathOverride : docFile.defaultDumpPath, decomp, temporary);
     }
     return 0;
 }
@@ -72,9 +81,8 @@ auto detect(const ubyte[] data, string identifier) @safe pure {
     return Result(false, false);
 }
 
-void dumpData(const DumpDoc doc, const CommonData commonData, ubyte[] source, const DumpInfo info, string outPath, bool decompress, bool clear) {
+void dumpData(const DumpDoc doc, const CommonData commonData, ubyte[] source, const DumpInfo info, string outPath, bool decompress, string temporary) {
     import std.conv : text;
-    import std.exception : enforce;
     assert(source.length == 0x300000, "ROM size too small: Got "~source.length.text);
     assert(info.offset <= 0x300000, "Starting offset too high while attempting to write "~info.subdir~"/"~info.name);
     assert(info.offset+info.size <= 0x300000, "Size too high while attempting to write "~info.subdir~"/"~info.name);
@@ -85,14 +93,6 @@ void dumpData(const DumpDoc doc, const CommonData commonData, ubyte[] source, co
     auto data = source[info.offset..info.offset+info.size];
     auto offset = info.offset+0xC00000;
     auto path = buildPath(outDir, info.name);
-
-    string temporary = buildPath(tempDir, "ebbinex");
-    if (clear && temporary.exists) {
-        rmdirRecurse(temporary);
-    } else {
-        enforce(!temporary.exists, "Temp folder already exists?");
-    }
-    mkdir(temporary);
 
     string[] files;
     switch (info.extension) {
@@ -156,7 +156,6 @@ void dumpData(const DumpDoc doc, const CommonData commonData, ubyte[] source, co
             //writeln("Skipping ", target);
         }
     }
-    rmdirRecurse(temporary);
 }
 
 bool sameFile(string file1, string file2) {
