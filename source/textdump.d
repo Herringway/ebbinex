@@ -11,6 +11,12 @@ import common;
 string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulong offset, const DumpDoc doc, const CommonData commonData) {
     import std.algorithm.searching : canFind;
     import std.array : empty, front, popFront;
+    TextFile[string] textFiles;
+    foreach (entry; doc.dumpEntries) {
+        if (entry.extension == "ebtxt") {
+            textFiles[entry.name] = TextFile(entry.offset + 0xC00000, entry.size);
+        }
+    }
     if (!doc.d) {
         return parseTextDataAssembly(dir, baseName, "", source, offset, doc, commonData);
     }
@@ -25,7 +31,18 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
     string tmpbuff;
     string tmpCompbuff;
     string label(const ulong addr) {
-        return addr in doc.renameLabels ? doc.renameLabels[addr] : format!"textBlock%06X"(addr);
+        if (addr == 0) {
+            return "null";
+        }
+        foreach (name, file; textFiles) {
+            if ((addr >= file.start) && (addr < file.start + file.length)) {
+                if (auto found = (addr - file.start) in doc.renameLabels.get(name, null)) {
+                    return *found;
+                }
+                throw new Exception(format!"No label found for %s/%04X"(name, addr - file.start));
+            }
+        }
+        throw new Exception("No matching files");
     }
     string nextLabel = label(offset);
     auto nextByte() {
@@ -80,8 +97,13 @@ string[] parseTextData(string dir, string baseName, string, ubyte[] source, ulon
         currentScriptUncompressed = [];
     }
     while (!source.empty) {
-        if (doc.forceTextLabels.canFind(offset)) {
-            nextScript();
+        foreach (name, textFile; textFiles) {
+            if ((offset >= textFile.start) && (offset < textFile.start + textFile.length)) {
+                if ((offset - textFile.start) in doc.renameLabels.get(name, null)) {
+                    nextScript();
+                    break;
+                }
+            }
         }
         auto first = nextByte();
         if (first in doc.textTable) {
@@ -910,16 +932,27 @@ immutable string[] statusGroups = [
     "SHIELD",
 ];
 
+struct TextFile {
+    size_t start;
+    size_t length;
+}
 
 string[] parseTextDataAssembly(string dir, string baseName, string, ubyte[] source, ulong offset, const DumpDoc doc, const CommonData commonData) {
     import std.algorithm.searching : canFind;
     import std.array : empty, front, popFront;
+    TextFile[string] textFiles;
+    foreach (entry; doc.dumpEntries) {
+        if (entry.extension == "ebtxt") {
+            textFiles[entry.name] = TextFile(entry.offset + 0xC00000, entry.size);
+        }
+    }
     const jpText = doc.dontUseTextTable;
     auto filename = setExtension(baseName, "ebtxt");
     auto uncompressedFilename = setExtension(baseName, "ebtxt.uncompressed");
     auto symbolFilename = setExtension(baseName, "symbols.asm");
     auto outFile = File(buildPath(dir, filename), "w");
     File outFileC;
+
     if (!jpText) {
         outFileC = File(buildPath(dir, uncompressedFilename), "w");
      }
@@ -941,8 +974,23 @@ string[] parseTextDataAssembly(string dir, string baseName, string, ubyte[] sour
     string tmpbuff;
     string tmpCompbuff;
     bool labelPrinted;
-    string label(const ulong addr) {
-        return addr in doc.renameLabels ? doc.renameLabels[addr] : format!"TEXT_BLOCK_%06X"(addr);
+    string label(const ulong addr, bool throwOnUndefined) {
+        if (addr == 0) {
+            return "NULL";
+        }
+        foreach (name, file; textFiles) {
+            if ((addr >= file.start) && (addr < file.start + file.length)) {
+                if (auto found = (addr - file.start) in doc.renameLabels.get(name, null)) {
+                    return *found;
+                }
+                if (throwOnUndefined) {
+                    throw new Exception(format!"No label found for %s/%04X"(name, addr - file.start));
+                } else {
+                    return "";
+                }
+            }
+        }
+        throw new Exception("No matching files");
     }
     auto nextByte() {
         labelPrinted = false;
@@ -976,21 +1024,29 @@ string[] parseTextDataAssembly(string dir, string baseName, string, ubyte[] sour
             flushCompressedBuff();
         }
     }
-    void printLabel() {
+    void printLabel(bool throwOnUndefined) {
         if (labelPrinted || source.empty) {
             return;
         }
-        const labelstr = label(offset);
+        const labelstr = label(offset, throwOnUndefined);
+        if (labelstr == "") {
+            return;
+        }
         flushBuffs();
         symbolFile.writefln!".GLOBAL %s: far"(labelstr);
         writeLine();
         writeFormatted!"%s: ;$%06X"(labelstr, offset);
         labelPrinted = true;
     }
-    printLabel();
+    printLabel(true);
     while (!source.empty) {
-        if (doc.forceTextLabels.canFind(offset)) {
-            printLabel();
+        foreach (name, textFile; textFiles) {
+            if ((offset >= textFile.start) && (offset < textFile.start + textFile.length)) {
+                if ((offset - textFile.start) in doc.renameLabels.get(name, null)) {
+                    printLabel(true);
+                    break;
+                }
+            }
         }
         auto first = nextByte();
         if (first in doc.textTable) {
@@ -1011,7 +1067,7 @@ string[] parseTextDataAssembly(string dir, string baseName, string, ubyte[] sour
             case 0x02:
                 flushBuffs();
                 writeLine("\tEBTEXT_END_BLOCK");
-                printLabel();
+                printLabel(false);
                 break;
             case 0x03:
                 flushBuffs();
@@ -1032,7 +1088,7 @@ string[] parseTextDataAssembly(string dir, string baseName, string, ubyte[] sour
                 auto flag = nextByte() + (nextByte()<<8);
                 auto dest = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
                 //assert(flag < 0x400, "Event flag number too high");
-                writeFormatted!"\tEBTEXT_JUMP_IF_FLAG_SET %s, EVENT_FLAG::%s"(label(dest), flag >= 0x400 ? format!"OVERFLOW%03X"(flag) : commonData.eventFlags[flag]);
+                writeFormatted!"\tEBTEXT_JUMP_IF_FLAG_SET %s, EVENT_FLAG::%s"(label(dest, true), flag >= 0x400 ? format!"OVERFLOW%03X"(flag) : commonData.eventFlags[flag]);
                 break;
             case 0x07:
                 flushBuffs();
@@ -1042,21 +1098,21 @@ string[] parseTextDataAssembly(string dir, string baseName, string, ubyte[] sour
             case 0x08:
                 flushBuffs();
                 auto dest = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                writeFormatted!"\tEBTEXT_CALL_TEXT %s"(label(dest));
+                writeFormatted!"\tEBTEXT_CALL_TEXT %s"(label(dest, true));
                 break;
             case 0x09:
                 flushBuffs();
                 auto argCount = nextByte();
                 string[] dests;
                 while(argCount--) {
-                    dests ~= label(nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24));
+                    dests ~= label(nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24), true);
                 }
                 writeFormatted!"\tEBTEXT_JUMP_MULTI %-(%s%|, %)"(dests);
                 break;
             case 0x0A:
                 flushBuffs();
                 auto dest = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                writeFormatted!"\tEBTEXT_JUMP %s\n"(label(dest));
+                writeFormatted!"\tEBTEXT_JUMP %s\n"(label(dest, true));
                 break;
             case 0x0B:
                 flushBuffs();
@@ -1153,7 +1209,8 @@ string[] parseTextDataAssembly(string dir, string baseName, string, ubyte[] sour
                         writeFormatted!"\tEBTEXT_UNKNOWN_CC_18_08 $%06X"(arg);
                         break;
                     case 0x09:
-                        writeLine("\tEBTEXT_UNKNOWN_CC_18_09");
+                        auto arg = nextByte();
+                        writeFormatted!"\tEBTEXT_UNKNOWN_CC_18_09 $%02X"(arg);
                         break;
                     case 0x0A:
                         writeLine("\tEBTEXT_SHOW_WALLET_WINDOW");
@@ -1173,9 +1230,9 @@ string[] parseTextDataAssembly(string dir, string baseName, string, ubyte[] sour
                         while (auto x = nextByte()) {
                             if (x == 1) {
                                 if (jpText) {
-                                    writeFormatted!"\tEBTEXT_LOAD_STRING_TO_MEMORY_WITH_SELECT_SCRIPT \"%s\", %s ; \"%s\""(payload, label(nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24)), jpTextBuffer);
+                                    writeFormatted!"\tEBTEXT_LOAD_STRING_TO_MEMORY_WITH_SELECT_SCRIPT \"%s\", %s ; \"%s\""(payload, label(nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24), true), jpTextBuffer);
                                 } else {
-                                    writeFormatted!"\tEBTEXT_LOAD_STRING_TO_MEMORY_WITH_SELECT_SCRIPT \"%s\", %s"(payload, label(nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24)));
+                                    writeFormatted!"\tEBTEXT_LOAD_STRING_TO_MEMORY_WITH_SELECT_SCRIPT \"%s\", %s"(payload, label(nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24), true));
                                 }
                                 break;
                             } else if (x == 2) {
@@ -1308,7 +1365,7 @@ string[] parseTextDataAssembly(string dir, string baseName, string, ubyte[] sour
                         auto dest3 = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
                         auto dest4 = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
                         auto arg5 = nextByte();
-                        writeFormatted!"\tEBTEXT_PARTY_MEMBER_SELECTION_MENU_UNCANCELLABLE $%06X, $%06X, $%06X, $%06X, $%02X"(dest, dest2, dest3, dest4, arg5);
+                        writeFormatted!"\tEBTEXT_PARTY_MEMBER_SELECTION_MENU_UNCANCELLABLE %s, %s, %s, %s, $%02X"(label(dest, true), label(dest2, true), label(dest3, true), label(dest4, true), arg5);
                         break;
                     case 0x05:
                         auto arg = nextByte();
@@ -1342,11 +1399,11 @@ string[] parseTextDataAssembly(string dir, string baseName, string, ubyte[] sour
                         break;
                     case 0x02:
                         auto dest = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                        writeFormatted!"\tEBTEXT_JUMP_IF_FALSE %s"(label(dest));
+                        writeFormatted!"\tEBTEXT_JUMP_IF_FALSE %s"(label(dest, true));
                         break;
                     case 0x03:
                         auto dest = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                        writeFormatted!"\tEBTEXT_JUMP_IF_TRUE %s"(label(dest));
+                        writeFormatted!"\tEBTEXT_JUMP_IF_TRUE %s"(label(dest, true));
                         break;
                     case 0x04:
                         writeLine("\tEBTEXT_SWAP_WORKING_AND_ARG_MEMORY");
@@ -1810,7 +1867,7 @@ string[] parseTextDataAssembly(string dir, string baseName, string, ubyte[] sour
                         break;
                     case 0x63:
                         auto arg = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                        writeFormatted!"\tEBTEXT_SCREEN_RELOAD_PTR %s"(label(arg));
+                        writeFormatted!"\tEBTEXT_SCREEN_RELOAD_PTR %s"(label(arg, true));
                         break;
                     case 0x64:
                         writeLine("\tEBTEXT_DELETE_ALL_NPCS");
@@ -1822,7 +1879,7 @@ string[] parseTextDataAssembly(string dir, string baseName, string, ubyte[] sour
                         auto arg = nextByte();
                         auto arg2 = nextByte();
                         auto arg3 = nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24);
-                        writeFormatted!"\tEBTEXT_ACTIVATE_HOTSPOT $%02X, $%02X, %s"(arg, arg2, label(arg3));
+                        writeFormatted!"\tEBTEXT_ACTIVATE_HOTSPOT $%02X, $%02X, %s"(arg, arg2, label(arg3, true));
                         break;
                     case 0x67:
                         auto arg = nextByte();
@@ -1861,7 +1918,7 @@ string[] parseTextDataAssembly(string dir, string baseName, string, ubyte[] sour
                         auto argCount = nextByte();
                         string[] dests;
                         while(argCount--) {
-                            dests ~= label(nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24));
+                            dests ~= label(nextByte() + (nextByte()<<8) + (nextByte()<<16) + (nextByte()<<24), true);
                         }
                         writeFormatted!"\tEBTEXT_JUMP_MULTI2 %-(%s%|, %)"(dests);
                         break;

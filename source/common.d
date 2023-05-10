@@ -3,13 +3,12 @@ module common;
 import std.array;
 
 struct DumpDoc {
-    uint[] forceTextLabels;
     DumpInfo[] dumpEntries;
     string[ubyte] textTable;
     string[ubyte] staffTextTable;
     string[ushort] flyoverTextTable;
     string[size_t] flyoverLabels;
-    string[size_t] renameLabels;
+    string[size_t][string] renameLabels;
     string[] compressedTextStrings;
     string defaultDumpPath = "bin";
     string romIdentifier;
