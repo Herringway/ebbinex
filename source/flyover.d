@@ -14,10 +14,8 @@ string[] parseFlyover(string dir, string baseName, string extension, ubyte[] sou
     auto symbolFilename = setExtension(baseName, "symbols.asm");
     auto outFile = File(buildPath(dir, filename), "w");
     File symbolFile;
-    if (!doc.d) {
-        symbolFile = File(buildPath(dir, symbolFilename), "w");
-        outFile.writefln!".INCLUDE \"%s\"\n"(setExtension(baseName.baseName, "symbols.asm"));
-    }
+    symbolFile = File(buildPath(dir, symbolFilename), "w");
+    outFile.writefln!".INCLUDE \"%s\"\n"(setExtension(baseName.baseName, "symbols.asm"));
     string tmpbuff;
     ubyte[] raw;
     ushort[] raw2;
@@ -30,10 +28,8 @@ string[] parseFlyover(string dir, string baseName, string extension, ubyte[] sou
     void printLabel() {
         const label = offset in doc.flyoverLabels;
         auto symbol = label ? (*label) : format!"FLYOVER_%06X"(offset);
-        if (!doc.d) {
-            symbolFile.writefln!".GLOBAL %s: far"(symbol);
-            outFile.writefln!"%s: ;$%06X"(symbol, offset);
-        }
+        symbolFile.writefln!".GLOBAL %s: far"(symbol);
+        outFile.writefln!"%s: ;$%06X"(symbol, offset);
     }
     void flushBuff() {
         if (tmpbuff == []) {
@@ -45,8 +41,6 @@ string[] parseFlyover(string dir, string baseName, string extension, ubyte[] sou
             } else {
                 outFile.writefln!"\t.BYTE %($%02X, %) ;\"%s\""(raw, tmpbuff);
             }
-        } else if (doc.d) {
-            outFile.write(tmpbuff);
         } else {
             outFile.writefln!"\tEBTEXT \"%s\""(tmpbuff);
         }
@@ -72,63 +66,35 @@ string[] parseFlyover(string dir, string baseName, string extension, ubyte[] sou
         flushBuff();
         switch (first) {
             case 0x00:
-                if (doc.d) {
-                    outFile.write("\0");
-                } else {
-                    outFile.writeln("\tEBFLYOVER_END");
-                    if (!source.empty) {
-                        outFile.writeln();
-                        printLabel();
-                    }
+                outFile.writeln("\tEBFLYOVER_END");
+                if (!source.empty) {
+                    outFile.writeln();
+                    printLabel();
                 }
                 break;
             case 0x01:
                 auto arg = nextByte();
-                if (doc.d) {
-                    outFile.writef!"\x01%s"(cast(char)arg);
-                } else {
-                    outFile.writefln!"\tEBFLYOVER_01 $%02X"(arg);
-                }
+                outFile.writefln!"\tEBFLYOVER_01 $%02X"(arg);
                 break;
             case 0x02:
                 auto arg = nextByte();
-                if (doc.d) {
-                    outFile.writef!"\x02%s"(cast(char)arg);
-                } else {
-                    outFile.writefln!"\tEBFLYOVER_02 $%02X"(arg);
-                }
+                outFile.writefln!"\tEBFLYOVER_02 $%02X"(arg);
                 break;
             case 0x08:
                 auto arg = nextByte();
-                if (doc.d) {
-                    outFile.writef!"\x08%s"(cast(char)arg);
-                } else {
-                    outFile.writefln!"\tEBFLYOVER_08 $%02X"(arg);
-                }
+                outFile.writefln!"\tEBFLYOVER_08 $%02X"(arg);
                 break;
             case 0x09:
-                if (doc.d) {
-                    outFile.write("\x09");
-                } else {
-                    outFile.writeln("\tEBFLYOVER_09");
-                }
+                outFile.writeln("\tEBFLYOVER_09");
                 break;
             default:
-                if (doc.d) {
-                    outFile.write(doc.flyoverTextTable.get(first, ""));
+                if (doc.multibyteFlyovers && first >= 0x80) {
+                    outFile.writefln!"\t.WORD $%04X ;???"((first>>8) | ((first&0xFF)<<8));
                 } else {
-                    if (doc.multibyteFlyovers && first >= 0x80) {
-                        outFile.writefln!"\t.WORD $%04X ;???"((first>>8) | ((first&0xFF)<<8));
-                    } else {
-                        outFile.writefln!"\t.BYTE $%02X ;???"(first);
-                    }
+                    outFile.writefln!"\t.BYTE $%02X ;???"(first);
                 }
                 break;
         }
     }
-    if (doc.d) {
-        return [filename];
-    } else {
-        return [filename, symbolFilename];
-    }
+    return [filename, symbolFilename];
 }

@@ -14,7 +14,6 @@ struct DumpDoc {
     string romIdentifier;
     bool dontUseTextTable;
     bool multibyteFlyovers;
-    bool d;
     Music music;
     bool supportsCompressedText() const @safe pure {
         return compressedTextStrings.length > 0;
